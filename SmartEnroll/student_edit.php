@@ -41,6 +41,20 @@ $student = null;
 $columns = [];
 $error = '';
 $showPopup = isset($_GET['saved']) && $_GET['saved'] === '1';
+$showBalanceWarningPopup = false;
+
+function resolve_remaining_balance(array $payment): float
+{
+    $storedBalance = round((float)($payment['balance_after'] ?? 0), 2);
+    $tuitionFee = round((float)($payment['tuition_fee'] ?? 0), 2);
+    $amountPaid = round((float)($payment['amount_paid'] ?? 0), 2);
+
+    if ($storedBalance > 0 || $amountPaid >= $tuitionFee) {
+        return max(0.0, $storedBalance);
+    }
+
+    return max(0.0, round($tuitionFee - $amountPaid, 2));
+}
 
 try {
     $conn = new mysqli('127.0.0.1', 'root', '', 'smartenroll');
@@ -71,22 +85,36 @@ try {
         throw new RuntimeException('Student record not found.');
     }
 
-    // Get outstanding balance for current school year
+    // Get outstanding balance for this student account
     $outstandingBalance = 0;
-    $schoolYear = trim((string)($student['school_year'] ?? ''));
-    if ($schoolYear !== '') {
+    $studentId = trim((string)($student['student_id'] ?? ''));
+    $enrollmentId = (int)($student['id'] ?? 0);
+    if ($studentId !== '' || $enrollmentId > 0) {
         $balanceStmt = $conn->prepare(
-            "SELECT COALESCE(MAX(balance_after), 0) as remaining_balance 
+            "SELECT tuition_fee, amount_paid, balance_after 
              FROM tuition_payments 
-             WHERE enrollment_id = ? 
-               AND COALESCE(school_year, '') = ? 
+             WHERE student_id = ? OR enrollment_id = ? 
+             ORDER BY payment_date DESC, id DESC 
              LIMIT 1"
         );
-        $balanceStmt->bind_param('is', $student['id'], $schoolYear);
+        $balanceStmt->bind_param('si', $studentId, $enrollmentId);
         $balanceStmt->execute();
         $balanceResult = $balanceStmt->get_result()->fetch_assoc();
         $balanceStmt->close();
-        $outstandingBalance = round((float)($balanceResult['remaining_balance'] ?? 0), 2);
+
+        if (!empty($balanceResult)) {
+            $outstandingBalance = resolve_remaining_balance($balanceResult);
+        } else {
+            // For new students with no payments, set balance to tuition fee
+            $gradeKey = trim((string)($student['grade_level'] ?? ''));
+            $tuitionFeeMap = [];
+            foreach ($gradeLevels as $gradeLevel) {
+                $tuitionFeeMap[(string)($gradeLevel['grade_key'] ?? '')] = round((float)($gradeLevel['tuition_fee'] ?? 0), 2);
+            }
+            if ($gradeKey !== '' && isset($tuitionFeeMap[$gradeKey])) {
+                $outstandingBalance = $tuitionFeeMap[$gradeKey];
+            }
+        }
     }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -100,17 +128,9 @@ try {
             }
         }
 
-        // Check if grade_level is being changed and if there's outstanding balance
-        $newGradeLevel = trim((string)($data['grade_level'] ?? ''));
-        $currentGradeLevel = trim((string)($student['grade_level'] ?? ''));
+        $gradeChangeAttempted = isset($_POST['grade_change_attempted']) && trim((string)$_POST['grade_change_attempted']) === '1';
 
-        if ($newGradeLevel !== '' && $newGradeLevel !== $currentGradeLevel && $outstandingBalance > 0) {
-            throw new RuntimeException(
-                'Cannot change grade level. This student has an outstanding balance of PHP ' . 
-                number_format($outstandingBalance, 2) . ' for the current school year. ' .
-                'Please settle the balance before changing the grade level.'
-            );
-        }
+        // No block for grade change, just proceed and update fee/balance
 
         if (array_key_exists('completion_date', $data)) {
             $completionDateRaw = $data['completion_date'];
@@ -151,6 +171,45 @@ try {
             $stmt->execute();
             $stmt->close();
 
+            // Handle grade level change: update tuition fee and balance
+            $newGradeLevel = trim((string)($data['grade_level'] ?? ''));
+            $currentGradeLevel = trim((string)($student['grade_level'] ?? ''));
+            if ($newGradeLevel !== '' && $newGradeLevel !== $currentGradeLevel) {
+                // Get new tuition fee
+                $newTuitionFee = 0;
+                foreach ($gradeLevels as $gradeLevel) {
+                    if ((string)$gradeLevel['grade_key'] === $newGradeLevel) {
+                        $newTuitionFee = round((float)($gradeLevel['tuition_fee'] ?? 0), 2);
+                        break;
+                    }
+                }
+
+                if ($newTuitionFee > 0) {
+                    // Get total paid so far
+                    $totalPaidStmt = $conn->prepare(
+                        "SELECT COALESCE(SUM(amount_paid), 0) AS total_paid FROM tuition_payments WHERE student_id = ? OR enrollment_id = ?"
+                    );
+                    $totalPaidStmt->bind_param('si', $studentId, $enrollmentId);
+                    $totalPaidStmt->execute();
+                    $totalPaidResult = $totalPaidStmt->get_result()->fetch_assoc();
+                    $totalPaidStmt->close();
+                    $totalPaid = round((float)($totalPaidResult['total_paid'] ?? 0), 2);
+
+                    // Update latest payment's tuition_fee and balance_after
+                    $updateStmt = $conn->prepare(
+                        "UPDATE tuition_payments 
+                         SET tuition_fee = ?, balance_after = ? 
+                         WHERE (student_id = ? OR enrollment_id = ?) 
+                         ORDER BY payment_date DESC, id DESC 
+                         LIMIT 1"
+                    );
+                    $newBalance = max(0, $newTuitionFee - $totalPaid);
+                    $updateStmt->bind_param('ddsi', $newTuitionFee, $newBalance, $studentId, $enrollmentId);
+                    $updateStmt->execute();
+                    $updateStmt->close();
+                }
+            }
+
             header('Location: student_edit.php?id=' . $id . '&saved=1');
             exit;
         }
@@ -163,9 +222,10 @@ try {
     $sectionMap = studentEditSections($columns);
 } catch (Throwable $e) {
     $error = $e->getMessage();
+    $showBalanceWarningPopup = strpos($error, 'Cannot change grade level') === 0;
     $skip = ['id', 'created_at'];
     $readOnly = ['student_id', 'school_year', 'created_at'];
-    $sectionMap = [];
+    $sectionMap = $student && !empty($columns) ? studentEditSections($columns) : [];
 }
 ?>
 <!DOCTYPE html>
@@ -218,15 +278,16 @@ try {
             <?php endif; ?>
 
             <?php if ($outstandingBalance > 0): ?>
-                <div id="balanceWarningPopup" class="popup-overlay" style="display: none;">
+                <div id="balanceWarningPopup" class="popup-overlay" style="display: <?php echo $showBalanceWarningPopup ? 'flex' : 'none'; ?>;">
                     <div class="popup-box">
-                        <div class="popup-icon warning-icon">
-                            <i class="fas fa-exclamation-triangle"></i>
+                        <div class="popup-icon warning-icon" id="warningIcon">
+                            <img src="assets/logo.png" id="warningLogo" alt="Logo">
+                            <i class="fas fa-exclamation-triangle" id="warningTriangle"></i>
                         </div>
 
-                        <h2>Outstanding Balance</h2>
-                        <p>This student has an outstanding balance of <strong>PHP <?php echo number_format($outstandingBalance, 2); ?></strong> for the current school year.</p>
-                        <p style="margin-top: 16px; font-size: 14px; color: #666;">You must settle this balance before changing to the next grade level.</p>
+                        <h2>Remaining Balance</h2>
+                        <p>This student has a remaining balance of <strong>PHP <?php echo number_format($outstandingBalance, 2); ?></strong> on their tuition account.</p>
+                        <p style="margin-top: 16px; font-size: 14px; color: #666;">You must settle this balance before changing the grade level.</p>
                         
                         <div style="display: flex; gap: 12px; margin-top: 24px;">
                             <button type="button" class="popup-btn" id="cancelGradeChange" style="background: #d0d5dd; color: #344054; flex: 1;">Cancel</button>
@@ -237,6 +298,8 @@ try {
             <?php endif; ?>
 
             <form method="post" id="studentEditForm">
+                <input type="hidden" name="grade_change_attempted" id="gradeChangeAttempted" value="0">
+                <input type="hidden" id="remainingBalance" value="<?php echo htmlspecialchars((string)$outstandingBalance, ENT_QUOTES, 'UTF-8'); ?>">
                 <?php foreach ($sectionMap as $sectionTitle => $fields): ?>
                     <div class="detail-section">
                         <h3 class="detail-section-title"><?php echo htmlspecialchars($sectionTitle); ?></h3>

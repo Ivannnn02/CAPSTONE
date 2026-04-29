@@ -141,34 +141,88 @@ if (closeSuccess && successPopup) {
   });
 }
 
+const warningPopup = document.getElementById('balanceWarningPopup');
+const warningIcon = document.getElementById('warningIcon');
+if (warningPopup && warningIcon && warningPopup.style.display === 'flex') {
+  warningIcon.classList.add('show-warning');
+}
+
+function animateWarningIcon() {
+  if (warningPopup && warningIcon) {
+    warningIcon.classList.remove('show-warning');
+    void warningIcon.offsetWidth;
+    warningIcon.classList.add('show-warning');
+  }
+}
+
 // Handle grade level change with balance warning
 (function() {
   const gradeSelectField = document.querySelector('select[name="grade_level"]');
   const balanceWarningPopup = document.getElementById('balanceWarningPopup');
   const cancelButton = document.getElementById('cancelGradeChange');
   const editForm = document.getElementById('studentEditForm');
-  
-  if (!gradeSelectField || !balanceWarningPopup) return;
-  
+  const gradeChangeAttemptedField = document.getElementById('gradeChangeAttempted');
+  const remainingBalanceField = document.getElementById('remainingBalance');
+
+  if (!gradeSelectField || !balanceWarningPopup || !editForm) return;
+
   const originalGradeLevel = gradeSelectField.value;
+  const remainingBalance = remainingBalanceField ? parseFloat(remainingBalanceField.value) : 0;
   let pendingGradeChange = false;
-  
-  gradeSelectField.addEventListener('change', function() {
-    const newGrade = this.value;
-    
-    if (newGrade !== originalGradeLevel && newGrade !== '') {
-      pendingGradeChange = true;
+
+  function hideSuccessPopupAndClearSaved() {
+    if (successPopup) {
+      successPopup.remove();
+    }
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('saved')) {
+      url.searchParams.delete('saved');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }
+
+  editForm.addEventListener('submit', function(e) {
+    // Always allow submit, but show popup if balance >0 and grade change pending
+    if (pendingGradeChange && remainingBalance > 0) {
+      hideSuccessPopupAndClearSaved();
       balanceWarningPopup.style.display = 'flex';
-      // Revert the selection
-      this.value = originalGradeLevel;
+      animateWarningIcon();
+      if (gradeChangeAttemptedField) {
+        gradeChangeAttemptedField.value = '1';
+      }
+      // Do not prevent, allow submit
     }
   });
-  
+
+  gradeSelectField.addEventListener('change', function() {
+    const newGrade = this.value;
+
+    if (newGrade !== originalGradeLevel && newGrade !== '') {
+      if (remainingBalance > 0) {
+        pendingGradeChange = true;
+        hideSuccessPopupAndClearSaved();
+        balanceWarningPopup.style.display = 'flex';
+        animateWarningIcon();
+        if (gradeChangeAttemptedField) {
+          gradeChangeAttemptedField.value = '1';
+        }
+      } else {
+        pendingGradeChange = false;
+        if (gradeChangeAttemptedField) {
+          gradeChangeAttemptedField.value = '0';
+        }
+      }
+    }
+  });
+
   if (cancelButton) {
     cancelButton.addEventListener('click', function() {
       pendingGradeChange = false;
       balanceWarningPopup.style.display = 'none';
       gradeSelectField.value = originalGradeLevel;
+      if (gradeChangeAttemptedField) {
+        gradeChangeAttemptedField.value = '0';
+      }
     });
   }
 })();

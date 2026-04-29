@@ -1746,10 +1746,10 @@ header {
 }
 
 .dashboard-main {
-    width: min(1680px, calc(100vw - 40px));
-    max-width: 1680px;
+    width: min(1920px, calc(100vw - 96px));
+    max-width: 1920px;
     margin: 0 auto;
-    padding: 42px 20px 56px;
+    padding: 42px 24px 56px;
     position: relative;
     z-index: 1;
 }
@@ -1974,8 +1974,8 @@ header {
 
 .dashboard-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 24px;
+    grid-template-columns: repeat(3, minmax(340px, 1fr));
+    gap: 28px;
 }
 
 .dashboard-summary-grid {
