@@ -71,3 +71,59 @@
     historyBody.prepend(row);
   });
 })();
+
+// Grade level history dropdown handler
+(function() {
+  const dropdown = document.getElementById('gradeLevelDropdown');
+  const container = document.getElementById('gradeHistoryContainer');
+  
+  if (!dropdown || !container) return;
+
+  function formatMoney(amount) {
+    return 'PHP ' + parseFloat(amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function formatDate(dateString) {
+    const date = new Date(dateString + 'T00:00:00');
+    const options = { year: 'numeric', month: 'short', day: 'numeric' };
+    return date.toLocaleDateString('en-PH', options);
+  }
+
+  dropdown.addEventListener('change', function() {
+    const selectedGrade = this.value;
+    
+    if (!selectedGrade || !detailedPaymentHistory[selectedGrade]) {
+      container.style.display = 'none';
+      return;
+    }
+
+    // Find the grade level summary
+    const gradeData = gradeLevelHistory.find(g => g.grade_key === selectedGrade);
+    document.getElementById('balanceForGrade').textContent = formatMoney(remainingBalance);
+
+    // Populate payment table
+    const payments = detailedPaymentHistory[selectedGrade] || [];
+    const tableBody = document.getElementById('paymentTableBody');
+    tableBody.innerHTML = '';
+
+    if (payments.length === 0) {
+      const row = document.createElement('tr');
+      row.innerHTML = '<td colspan="5" style="text-align: center; padding: 20px; color: #999;">No payments recorded for this grade level.</td>';
+      tableBody.appendChild(row);
+    } else {
+      payments.forEach(payment => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${formatDate(payment.payment_date)}</td>
+          <td><strong>${payment.receipt_no || '—'}</strong></td>
+          <td class="amount-col">${formatMoney(payment.amount_paid)}</td>
+          <td>${payment.school_year}</td>
+          <td class="amount-col ${payment.balance_after > 0 ? 'balance-pending' : 'balance-settled'}">${formatMoney(payment.balance_after)}</td>
+        `;
+        tableBody.appendChild(row);
+      });
+    }
+
+    container.style.display = 'block';
+  });
+})();

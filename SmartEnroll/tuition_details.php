@@ -130,13 +130,16 @@ if ($student && isset($conn) && $conn instanceof mysqli) {
     }
 
     if ($hasPaymentsTable && $selectedEnrollmentId > 0) {
+        $selectedStudentId = trim((string)($student['student_id'] ?? ''));
+        $currentGradeLevel = trim((string)($student['grade_level'] ?? ''));
         $paymentStmt = $conn->prepare(
             "SELECT COALESCE(SUM(amount_paid), 0) AS total_paid
              FROM tuition_payments
-             WHERE enrollment_id = ?
+             WHERE (enrollment_id = ? OR student_id = ?)
+               AND COALESCE(grade_level, '') = ?
                AND COALESCE(school_year, '') = ?"
         );
-        $paymentStmt->bind_param('is', $selectedEnrollmentId, $selectedSchoolYear);
+        $paymentStmt->bind_param('iiss', $selectedEnrollmentId, $selectedStudentId, $currentGradeLevel, $selectedSchoolYear);
         $paymentStmt->execute();
         $paymentRow = $paymentStmt->get_result()->fetch_assoc();
         $paymentStmt->close();
@@ -145,6 +148,97 @@ if ($student && isset($conn) && $conn instanceof mysqli) {
 }
 
 $remainingBalance = max(0, round($totalTuition - $amountPaid, 2));
+
+// Get grade level history with payment breakdown
+$gradeLevelHistory = [];
+$detailedPaymentHistory = []; // For storing detailed transactions per grade level
+if ($student && isset($conn) && $conn instanceof mysqli) {
+    $selectedEnrollmentId = (int)($student['id'] ?? 0);
+    $selectedStudentId = trim((string)($student['student_id'] ?? ''));
+    
+    $tableCheck = $conn->query("SHOW TABLES LIKE 'tuition_payments'");
+    $hasPaymentsTable = $tableCheck && $tableCheck->num_rows > 0;
+    if ($tableCheck) {
+        $tableCheck->close();
+    }
+    
+    if ($hasPaymentsTable) {
+        // Get summary for each grade level
+        $historyStmt = $conn->prepare(
+            "SELECT 
+                COALESCE(grade_level, 'Unknown') AS grade_level,
+                COALESCE(school_year, 'N/A') AS school_year,
+                COUNT(*) AS payment_count,
+                COALESCE(SUM(amount_paid), 0) AS total_paid,
+                COALESCE(MAX(tuition_fee), 0) AS annual_total
+             FROM tuition_payments
+             WHERE (enrollment_id = ? OR student_id = ?)
+             GROUP BY grade_level, school_year
+             ORDER BY school_year DESC, grade_level"
+        );
+        $historyStmt->bind_param('is', $selectedEnrollmentId, $selectedStudentId);
+        $historyStmt->execute();
+        $historyResult = $historyStmt->get_result();
+        
+        while ($row = $historyResult->fetch_assoc()) {
+            $annualTotal = (float)$row['annual_total'];
+            $totalPaid = (float)$row['total_paid'];
+            $currentBalance = max(0, round($annualTotal - $totalPaid, 2));
+            $gradeKey = trim((string)$row['grade_level']) !== ''
+                ? trim((string)$row['grade_level']) . '|' . trim((string)$row['school_year'])
+                : 'Unknown|' . trim((string)$row['school_year']);
+
+            $gradeLevelHistory[] = [
+                'grade_key' => $gradeKey,
+                'grade_level' => $row['grade_level'],
+                'school_year' => $row['school_year'],
+                'payment_count' => (int)$row['payment_count'],
+                'total_paid' => $totalPaid,
+                'annual_total' => $annualTotal,
+                'last_balance' => $currentBalance
+            ];
+        }
+        $historyStmt->close();
+        
+        // Get detailed payment transactions for each grade level
+        $detailStmt = $conn->prepare(
+            "SELECT 
+                id,
+                grade_level,
+                school_year,
+                payment_date,
+                amount_paid,
+                tuition_fee,
+                balance_after,
+                receipt_no
+             FROM tuition_payments
+             WHERE (enrollment_id = ? OR student_id = ?)
+             ORDER BY grade_level, payment_date DESC"
+        );
+        $detailStmt->bind_param('is', $selectedEnrollmentId, $selectedStudentId);
+        $detailStmt->execute();
+        $detailResult = $detailStmt->get_result();
+        
+        while ($row = $detailResult->fetch_assoc()) {
+            $gradeKey = trim((string)$row['grade_level']) !== ''
+                ? trim((string)$row['grade_level']) . '|' . trim((string)$row['school_year'])
+                : 'Unknown|' . trim((string)$row['school_year']);
+            if (!isset($detailedPaymentHistory[$gradeKey])) {
+                $detailedPaymentHistory[$gradeKey] = [];
+            }
+            $detailedPaymentHistory[$gradeKey][] = [
+                'id' => (int)$row['id'],
+                'payment_date' => $row['payment_date'],
+                'amount_paid' => (float)$row['amount_paid'],
+                'tuition_fee' => (float)$row['tuition_fee'],
+                'balance_after' => (float)$row['balance_after'],
+                'receipt_no' => $row['receipt_no'],
+                'school_year' => $row['school_year']
+            ];
+        }
+        $detailStmt->close();
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error === '') {
     $csrfToken = trim((string)($_POST['csrf_token'] ?? ''));
@@ -322,6 +416,64 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                     </div>
                 </div>
 
+                <hr class="tuition-divider">
+
+                <?php if (!empty($gradeLevelHistory)): ?>
+                <div class="tuition-form-section">
+                    <div class="tuition-section-head">
+                        <h3>Grade Level History</h3>
+                        <p>Select a grade level to view detailed payment records.</p>
+                    </div>
+
+                    <div class="grade-level-selector">
+                        <label for="gradeLevelDropdown">Select Grade Level:</label>
+                        <select id="gradeLevelDropdown" class="grade-dropdown">
+                            <option value="">-- Select a grade level --</option>
+                            <?php foreach ($gradeLevelHistory as $history): ?>
+                            <option value="<?php echo htmlspecialchars($history['grade_key']); ?>">
+                                <?php echo htmlspecialchars($history['grade_level'] . ' (' . $history['school_year'] . ')'); ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div id="gradeHistoryContainer" style="display: none;">
+                        <div class="grade-summary-cards">
+                            <div class="grade-summary-card">
+                                <span>Annual Program Total</span>
+                                <strong id="annualTotal">PHP 0.00</strong>
+                            </div>
+                            <div class="grade-summary-card">
+                                <span>Total Paid</span>
+                                <strong id="totalPaidForGrade">PHP 0.00</strong>
+                            </div>
+                            <div class="grade-summary-card accent">
+                                <span>Remaining Balance</span>
+                                <strong id="balanceForGrade">PHP 0.00</strong>
+                            </div>
+                        </div>
+
+                        <div class="payment-details-table">
+                            <table class="payment-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Receipt No.</th>
+                                        <th>Amount Paid</th>
+                                        <th>School Year</th>
+                                        <th>Balance After</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="paymentTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <hr class="tuition-divider">
+                <?php endif; ?>
+
                 <div class="tuition-actions">
                     <form method="post" action="tuition_details.php">
                         <input type="hidden" name="action" value="send_tuition_details">
@@ -337,6 +489,12 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
         </div>
     </section>
 </main>
+
+<script>
+    // Grade level payment history data
+    const detailedPaymentHistory = <?php echo json_encode($detailedPaymentHistory, JSON_UNESCAPED_SLASHES); ?>;
+    const gradeLevelHistory = <?php echo json_encode($gradeLevelHistory, JSON_UNESCAPED_SLASHES); ?>;
+</script>
 
 <script src="js/tuition_details.js"></script></body>
 </html>

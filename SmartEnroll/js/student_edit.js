@@ -182,15 +182,16 @@ function animateWarningIcon() {
   }
 
   editForm.addEventListener('submit', function(e) {
-    // Always allow submit, but show popup if balance >0 and grade change pending
+    // Prevent submit if grade change is pending and balance > 0
     if (pendingGradeChange && remainingBalance > 0) {
+      e.preventDefault();
       hideSuccessPopupAndClearSaved();
       balanceWarningPopup.style.display = 'flex';
       animateWarningIcon();
       if (gradeChangeAttemptedField) {
         gradeChangeAttemptedField.value = '1';
       }
-      // Do not prevent, allow submit
+      return false;
     }
   });
 
@@ -207,10 +208,18 @@ function animateWarningIcon() {
           gradeChangeAttemptedField.value = '1';
         }
       } else {
+        // Grade change allowed - student is fully paid
         pendingGradeChange = false;
         if (gradeChangeAttemptedField) {
           gradeChangeAttemptedField.value = '0';
         }
+      }
+    } else {
+      // Grade changed back to original or cleared
+      pendingGradeChange = false;
+      balanceWarningPopup.style.display = 'none';
+      if (gradeChangeAttemptedField) {
+        gradeChangeAttemptedField.value = '0';
       }
     }
   });

@@ -1240,6 +1240,8 @@ try {
                     write_audit_log($conn, $currentUser, 'tuition_invoice_preview_emailed', 'tuition_invoice_preview', $receiptNo, [
                         'student_id' => (string)$selectedStudent['student_id'],
                         'email' => $emailValue,
+                        'grade_level' => $selectedGradeLevel,
+                        'school_year' => $selectedSchoolYear,
                         'payment_date' => $paymentDate,
                         'amount' => $amountPaid,
                         'items' => $paymentItems,
@@ -1370,16 +1372,20 @@ try {
         throw new RuntimeException('The selected student could not be found.');
     }
 
+    $selectedGradeLevel = trim((string)($selectedStudent['grade_level'] ?? ''));
+    $selectedSchoolYear = trim((string)($selectedStudent['school_year'] ?? ''));
+    $selectedStudentId = trim((string)($selectedStudent['student_id'] ?? ''));
+    $selectedEnrollmentId = (int)($selectedStudent['id'] ?? 0);
+
     $historyStmt = $conn->prepare(
         "SELECT id, payment_date, amount_paid, tuition_fee, balance_after, receipt_no, payment_note, payment_items, payment_token, email_sent, created_at
          FROM tuition_payments
-         WHERE enrollment_id = ?
-           AND COALESCE(school_year, '') = ?
+         WHERE (enrollment_id = ? OR student_id = ?)
+           AND grade_level = ?
+           AND school_year = ?
          ORDER BY payment_date DESC, id DESC"
     );
-    $selectedSchoolYear = trim((string)($selectedStudent['school_year'] ?? ''));
-    $selectedEnrollmentId = (int)($selectedStudent['id'] ?? 0);
-    $historyStmt->bind_param('is', $selectedEnrollmentId, $selectedSchoolYear);
+    $historyStmt->bind_param('iiss', $selectedEnrollmentId, $selectedStudentId, $selectedGradeLevel, $selectedSchoolYear);
     $historyStmt->execute();
     $historyResult = $historyStmt->get_result();
     while ($historyRow = $historyResult->fetch_assoc()) {
@@ -1394,6 +1400,9 @@ try {
     $gmailHistoryActionPreview = 'tuition_invoice_preview_emailed';
     $gmailHistoryActionInvoice = 'tuition_receipt_emailed';
     $gmailHistoryStudentPattern = '%"student_id":"' . (string)$selectedStudent['student_id'] . '"%';
+    $gmailHistoryGradePattern = '%"grade_level":"' . addslashes($selectedGradeLevel) . '"%';
+    $gmailHistorySchoolYearPattern = '%"school_year":"' . addslashes($selectedSchoolYear) . '"%';
+
     $gmailHistoryStmt = $conn->prepare(
         "SELECT
             al.id,
@@ -1410,11 +1419,24 @@ try {
          LEFT JOIN tuition_payments tp
            ON al.action = 'tuition_receipt_emailed'
           AND tp.id = CAST(al.entity_id AS UNSIGNED)
+          AND tp.grade_level = ?
+          AND tp.school_year = ?
          WHERE al.action IN (?, ?)
+           AND al.details_json LIKE ?
+           AND al.details_json LIKE ?
            AND al.details_json LIKE ?
          ORDER BY al.created_at DESC, al.id DESC"
     );
-    $gmailHistoryStmt->bind_param('sss', $gmailHistoryActionPreview, $gmailHistoryActionInvoice, $gmailHistoryStudentPattern);
+    $gmailHistoryStmt->bind_param(
+        'sssssss',
+        $selectedGradeLevel,
+        $selectedSchoolYear,
+        $gmailHistoryActionPreview,
+        $gmailHistoryActionInvoice,
+        $gmailHistoryStudentPattern,
+        $gmailHistoryGradePattern,
+        $gmailHistorySchoolYearPattern
+    );
     $gmailHistoryStmt->execute();
     $gmailHistoryResult = $gmailHistoryStmt->get_result();
 

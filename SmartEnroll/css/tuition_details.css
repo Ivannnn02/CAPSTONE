@@ -369,3 +369,287 @@
         justify-content: center;
     }
 }
+
+/* Grade Level History Table Styles */
+.tuition-grade-history-table {
+    overflow-x: auto;
+    border-radius: 18px;
+    border: 1px solid #dce6f2;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+}
+
+.grade-history-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #ffffff;
+}
+
+.grade-history-table thead {
+    background: linear-gradient(135deg, #f0f7ff, #f5faff);
+    border-bottom: 2px solid #d9e4f1;
+}
+
+.grade-history-table th {
+    padding: 16px 14px;
+    text-align: left;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #19325a;
+}
+
+.grade-history-table tbody tr {
+    border-bottom: 1px solid #e5ecf5;
+    transition: background-color 0.2s ease;
+}
+
+.grade-history-table tbody tr:hover {
+    background-color: #f9fbfd;
+}
+
+.grade-history-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.grade-history-table td {
+    padding: 14px;
+    font-size: 0.95rem;
+    color: #10213d;
+}
+
+.grade-history-table .grade-col {
+    font-weight: 600;
+}
+
+.grade-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #e0e7ff, #f0f4ff);
+    color: #1d4ed8;
+    font-weight: 600;
+    font-size: 0.88rem;
+}
+
+.grade-history-table .amount-col {
+    text-align: right;
+    font-weight: 600;
+    color: #10213d;
+}
+
+.grade-history-table .amount-col.paid {
+    color: #15803d;
+}
+
+.grade-history-table .amount-col.balance {
+    font-weight: 700;
+}
+
+.grade-history-table .amount-col.balance.settled {
+    color: #15803d;
+}
+
+.grade-history-table .amount-col.balance.pending {
+    color: #dc2626;
+}
+
+.grade-history-table .center-col {
+    text-align: center;
+    font-weight: 600;
+}
+
+.payment-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    background: #f0f7ff;
+    border: 1px solid #cfe1fb;
+    color: #1d4ed8;
+    font-weight: 700;
+    font-size: 0.88rem;
+}
+
+@media (max-width: 820px) {
+    .grade-history-table {
+        font-size: 0.88rem;
+    }
+
+    .grade-history-table th,
+    .grade-history-table td {
+        padding: 12px 10px;
+    }
+
+    .grade-history-table th {
+        font-size: 0.78rem;
+    }
+
+    .grade-badge {
+        padding: 4px 10px;
+        font-size: 0.8rem;
+    }
+}
+
+/* Grade Level Dropdown Selector */
+.grade-level-selector {
+    margin-bottom: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.grade-level-selector label {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: #19325a;
+}
+
+.grade-dropdown {
+    width: 100%;
+    min-height: 50px;
+    border: 1px solid #d9e4f1;
+    border-radius: 16px;
+    padding: 13px 15px;
+    font-size: 0.95rem;
+    font-family: 'Poppins', sans-serif;
+    color: #10213d;
+    background: #fbfdff;
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.grade-dropdown:hover {
+    border-color: #cfe1fb;
+}
+
+.grade-dropdown:focus {
+    outline: none;
+    border-color: #4e8ef7;
+    box-shadow: 0 0 0 4px rgba(78, 142, 247, 0.12);
+    background: #ffffff;
+}
+
+/* Grade Summary Cards */
+.grade-summary-cards {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-bottom: 24px;
+}
+
+.grade-summary-card {
+    padding: 18px 20px;
+    border-radius: 18px;
+    background: #ffffff;
+    border: 1px solid #e5ecf5;
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
+}
+
+.grade-summary-card span {
+    display: block;
+    margin-bottom: 10px;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #5f6f84;
+}
+
+.grade-summary-card strong {
+    display: block;
+    font-size: 1.5rem;
+    line-height: 1.1;
+    color: #10213d;
+    font-weight: 700;
+}
+
+.grade-summary-card.accent {
+    background: linear-gradient(135deg, #f4f9ff, #eef6ff);
+    border-color: #cfe1fb;
+}
+
+/* Payment Details Table */
+.payment-details-table {
+    overflow-x: auto;
+    border-radius: 16px;
+    border: 1px solid #dce6f2;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+}
+
+.payment-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #ffffff;
+}
+
+.payment-table thead {
+    background: linear-gradient(135deg, #f0f7ff, #f5faff);
+    border-bottom: 2px solid #d9e4f1;
+}
+
+.payment-table th {
+    padding: 16px 14px;
+    text-align: left;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #19325a;
+}
+
+.payment-table tbody tr {
+    border-bottom: 1px solid #e5ecf5;
+    transition: background-color 0.2s ease;
+}
+
+.payment-table tbody tr:hover {
+    background-color: #f9fbfd;
+}
+
+.payment-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.payment-table td {
+    padding: 14px;
+    font-size: 0.95rem;
+    color: #10213d;
+}
+
+.payment-table .amount-col {
+    text-align: right;
+    font-weight: 600;
+}
+
+.payment-table .amount-col.balance-settled {
+    color: #15803d;
+}
+
+.payment-table .amount-col.balance-pending {
+    color: #dc2626;
+    font-weight: 700;
+}
+
+@media (max-width: 820px) {
+    .grade-summary-cards {
+        grid-template-columns: 1fr;
+    }
+
+    .payment-table {
+        font-size: 0.88rem;
+    }
+
+    .payment-table th,
+    .payment-table td {
+        padding: 12px 10px;
+    }
+
+    .payment-table th {
+        font-size: 0.78rem;
+    }
+}

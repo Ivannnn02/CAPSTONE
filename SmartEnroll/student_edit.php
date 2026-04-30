@@ -85,27 +85,32 @@ try {
         throw new RuntimeException('Student record not found.');
     }
 
-    // Get outstanding balance for this student account
+    // Get outstanding balance for this student's CURRENT grade level
     $outstandingBalance = 0;
     $studentId = trim((string)($student['student_id'] ?? ''));
     $enrollmentId = (int)($student['id'] ?? 0);
+    $currentGradeLevel = trim((string)($student['grade_level'] ?? ''));
+
     if ($studentId !== '' || $enrollmentId > 0) {
+        // Calculate balance as: tuition_fee - SUM(amount_paid) for all payments in current grade level
         $balanceStmt = $conn->prepare(
-            "SELECT tuition_fee, amount_paid, balance_after 
-             FROM tuition_payments 
-             WHERE student_id = ? OR enrollment_id = ? 
-             ORDER BY payment_date DESC, id DESC 
-             LIMIT 1"
+            "SELECT 
+                COALESCE(SUM(amount_paid), 0) AS total_paid,
+                COALESCE(MAX(tuition_fee), 0) AS tuition_fee
+             FROM tuition_payments
+             WHERE (student_id = ? OR enrollment_id = ?) AND grade_level = ?"
         );
-        $balanceStmt->bind_param('si', $studentId, $enrollmentId);
+        $balanceStmt->bind_param('sis', $studentId, $enrollmentId, $currentGradeLevel);
         $balanceStmt->execute();
         $balanceResult = $balanceStmt->get_result()->fetch_assoc();
         $balanceStmt->close();
 
         if (!empty($balanceResult)) {
-            $outstandingBalance = resolve_remaining_balance($balanceResult);
+            $totalPaid = round((float)($balanceResult['total_paid'] ?? 0), 2);
+            $tuitionFee = round((float)($balanceResult['tuition_fee'] ?? 0), 2);
+            $outstandingBalance = max(0, round($tuitionFee - $totalPaid, 2));
         } else {
-            // For new students with no payments, set balance to tuition fee
+            // For students with no payments for current grade level, set balance to tuition fee
             $gradeKey = trim((string)($student['grade_level'] ?? ''));
             $tuitionFeeMap = [];
             foreach ($gradeLevels as $gradeLevel) {
@@ -128,9 +133,17 @@ try {
             }
         }
 
-        $gradeChangeAttempted = isset($_POST['grade_change_attempted']) && trim((string)$_POST['grade_change_attempted']) === '1';
+        // Check if grade level is being changed
+        $newGradeLevel = trim((string)($data['grade_level'] ?? ''));
+        $currentGradeLevel = trim((string)($student['grade_level'] ?? ''));
+        $gradeIsChanging = $newGradeLevel !== '' && $newGradeLevel !== $currentGradeLevel;
 
-        // No block for grade change, just proceed and update fee/balance
+        // If grade level is changing, check if student is fully paid
+        if ($gradeIsChanging) {
+            if ($outstandingBalance > 0) {
+                throw new RuntimeException('Cannot change grade level. This student has an outstanding balance of PHP ' . number_format($outstandingBalance, 2) . '. Please settle the balance before changing the grade level.');
+            }
+        }
 
         if (array_key_exists('completion_date', $data)) {
             $completionDateRaw = $data['completion_date'];
@@ -171,11 +184,11 @@ try {
             $stmt->execute();
             $stmt->close();
 
-            // Handle grade level change: update tuition fee and balance
+            // Handle grade level change: create new transaction for the new grade level
             $newGradeLevel = trim((string)($data['grade_level'] ?? ''));
             $currentGradeLevel = trim((string)($student['grade_level'] ?? ''));
             if ($newGradeLevel !== '' && $newGradeLevel !== $currentGradeLevel) {
-                // Get new tuition fee
+                // Get new annual program total (tuition fee) for the new grade level
                 $newTuitionFee = 0;
                 foreach ($gradeLevels as $gradeLevel) {
                     if ((string)$gradeLevel['grade_key'] === $newGradeLevel) {
@@ -185,28 +198,38 @@ try {
                 }
 
                 if ($newTuitionFee > 0) {
-                    // Get total paid so far
-                    $totalPaidStmt = $conn->prepare(
-                        "SELECT COALESCE(SUM(amount_paid), 0) AS total_paid FROM tuition_payments WHERE student_id = ? OR enrollment_id = ?"
-                    );
-                    $totalPaidStmt->bind_param('si', $studentId, $enrollmentId);
-                    $totalPaidStmt->execute();
-                    $totalPaidResult = $totalPaidStmt->get_result()->fetch_assoc();
-                    $totalPaidStmt->close();
-                    $totalPaid = round((float)($totalPaidResult['total_paid'] ?? 0), 2);
+                    // Get school year from enrollment record
+                    $currentSchoolYear = trim((string)($student['school_year'] ?? ''));
 
-                    // Update latest payment's tuition_fee and balance_after
-                    $updateStmt = $conn->prepare(
-                        "UPDATE tuition_payments 
-                         SET tuition_fee = ?, balance_after = ? 
-                         WHERE (student_id = ? OR enrollment_id = ?) 
-                         ORDER BY payment_date DESC, id DESC 
-                         LIMIT 1"
+                    // Generate a new receipt number for the grade level change
+                    $receiptNo = 'GLC-' . date('Ymd') . '-' . str_pad((string)$id, 4, '0', STR_PAD_LEFT);
+
+                    // Create new payment transaction for the new grade level
+                    $insertStmt = $conn->prepare(
+                        "INSERT INTO tuition_payments (
+                            enrollment_id, student_id, email, school_year, grade_level,
+                            payment_date, amount_paid, tuition_fee, balance_after,
+                            receipt_no, payment_note, payment_status
+                        ) VALUES (?, ?, ?, ?, ?, CURDATE(), 0, ?, ?, ?, ?, 'ready')"
                     );
-                    $newBalance = max(0, $newTuitionFee - $totalPaid);
-                    $updateStmt->bind_param('ddsi', $newTuitionFee, $newBalance, $studentId, $enrollmentId);
-                    $updateStmt->execute();
-                    $updateStmt->close();
+
+                    $studentEmail = trim((string)($student['email'] ?? ''));
+                    $paymentNote = "Grade level changed from {$currentGradeLevel} to {$newGradeLevel}";
+
+                    $insertStmt->bind_param(
+                        'issssddss',
+                        $enrollmentId,           // enrollment_id
+                        $studentId,             // student_id
+                        $studentEmail,          // email
+                        $currentSchoolYear,     // school_year
+                        $newGradeLevel,         // grade_level
+                        $newTuitionFee,         // tuition_fee
+                        $newTuitionFee,         // balance_after (full amount owed)
+                        $receiptNo,             // receipt_no
+                        $paymentNote            // payment_note
+                    );
+                    $insertStmt->execute();
+                    $insertStmt->close();
                 }
             }
 
@@ -258,8 +281,14 @@ try {
     <div class="student-edit-card">
         <?php if ($error): ?>
             <div class="student-error">
-                <strong><?php echo strpos($error, 'Cannot change grade level') === 0 ? 'Grade Level Change Blocked' : 'Unable to load student.'; ?></strong>
+                <strong><?php echo strpos($error, 'Cannot change grade level') === 0 ? 'Cannot Change Grade Level' : 'Unable to load student.'; ?></strong>
                 <p><?php echo htmlspecialchars($error); ?></p>
+                <?php if (strpos($error, 'Cannot change grade level') === 0): ?>
+                    <p style="margin-top: 12px; font-size: 14px; color: #666;">
+                        Please navigate to <a href="tuition_receipt_details.php?student_id=<?php echo urlencode((string)($student['student_id'] ?? '')); ?>" style="color: #3b82f6; text-decoration: none;">Payment Record</a> 
+                        to settle the remaining balance, then you can change the grade level.
+                    </p>
+                <?php endif; ?>
             </div>
         <?php else: ?>
             <?php if ($showPopup): ?>
@@ -285,13 +314,13 @@ try {
                             <i class="fas fa-exclamation-triangle" id="warningTriangle"></i>
                         </div>
 
-                        <h2>Remaining Balance</h2>
+                        <h2>Outstanding Balance</h2>
                         <p>This student has a remaining balance of <strong>PHP <?php echo number_format($outstandingBalance, 2); ?></strong> on their tuition account.</p>
-                        <p style="margin-top: 16px; font-size: 14px; color: #666;">You must settle this balance before changing the grade level.</p>
+                        <p style="margin-top: 16px; font-size: 14px; color: #666;">To change the grade level and update the tuition rate, you must first settle this balance.</p>
                         
                         <div style="display: flex; gap: 12px; margin-top: 24px;">
                             <button type="button" class="popup-btn" id="cancelGradeChange" style="background: #d0d5dd; color: #344054; flex: 1;">Cancel</button>
-                            <a href="tuition_receipt_details.php?student_id=<?php echo urlencode((string)$student['student_id']); ?>" class="popup-btn" style="background: #3b82f6; color: white; text-decoration: none; flex: 1; display: flex; align-items: center; justify-content: center;">Pay Now</a>
+                            <a href="tuition_receipt_details.php?student_id=<?php echo urlencode((string)$student['student_id']); ?>" class="popup-btn" style="background: #3b82f6; color: white; text-decoration: none; flex: 1; display: flex; align-items: center; justify-content: center;">Go to Payment</a>
                         </div>
                     </div>
                 </div>
