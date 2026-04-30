@@ -1,7 +1,10 @@
 const dobInput = document.querySelector('input[name="dob"]');
 const ageInput = document.querySelector('input[name="age"]');
-const completionDateInput = document.querySelector('input[name="completion_date"]');
-const schoolYearInput = document.querySelector('input[name="school_year"]');
+const schoolYearInput = document.getElementById('schoolYearInput');
+const schoolYearHiddenInput = document.getElementById('schoolYearHiddenInput');
+const schoolYearStartDateInput = document.getElementById('schoolYearStartDate');
+const schoolYearEndDateInput = document.getElementById('schoolYearEndDate');
+const studentEditForm = document.getElementById('studentEditForm');
 
 function calculateAge(dobValue) {
   if (!dobValue) return '';
@@ -27,24 +30,111 @@ if (dobInput && ageInput) {
   });
 }
 
-function calculateSchoolYear(dateValue) {
-  if (!dateValue) return '';
-  const completionDate = new Date(dateValue);
-  if (Number.isNaN(completionDate.getTime())) return '';
-  const month = completionDate.getMonth() + 1;
-  const year = completionDate.getFullYear();
-  const startYear = month >= 6 ? year : year - 1;
-  return `${startYear}-${startYear + 1}`;
+function calculateSchoolYearFromDates(startDateValue, endDateValue) {
+  const startDate = startDateValue ? new Date(startDateValue) : null;
+  const endDate = endDateValue ? new Date(endDateValue) : null;
+  const hasValidStartDate = startDate instanceof Date && !Number.isNaN(startDate.getTime());
+  const hasValidEndDate = endDate instanceof Date && !Number.isNaN(endDate.getTime());
+
+  if (hasValidStartDate) {
+    const startYear = startDate.getFullYear();
+    if (hasValidEndDate) {
+      const endYear = endDate.getFullYear();
+      return `${startYear}-${endYear >= startYear ? endYear : startYear + 1}`;
+    }
+
+    return `${startYear}-${startYear + 1}`;
+  }
+
+  if (hasValidEndDate) {
+    const endYear = endDate.getFullYear();
+    return `${endYear - 1}-${endYear}`;
+  }
+
+  return '';
 }
 
-if (completionDateInput && schoolYearInput) {
-  const initialSchoolYear = calculateSchoolYear(completionDateInput.value);
-  if (initialSchoolYear) {
-    schoolYearInput.value = initialSchoolYear;
+function normalizeSchoolYearValue(value) {
+  const rawValue = String(value || '').trim();
+  const matches = rawValue.match(/\d{4}/g);
+  if (!matches || !matches.length) {
+    return '';
   }
-  completionDateInput.addEventListener('change', () => {
-    const schoolYear = calculateSchoolYear(completionDateInput.value);
-    schoolYearInput.value = schoolYear || '';
+
+  const startYear = Number(matches[0]);
+  if (!Number.isFinite(startYear) || startYear <= 0) {
+    return '';
+  }
+
+  let endYear = matches[1] ? Number(matches[1]) : startYear + 1;
+  if (!Number.isFinite(endYear) || endYear < startYear) {
+    endYear = startYear + 1;
+  }
+
+  return `${startYear}-${endYear}`;
+}
+
+function syncDateInputsFromSchoolYear(schoolYearValue) {
+  const normalizedSchoolYear = normalizeSchoolYearValue(schoolYearValue);
+  if (!normalizedSchoolYear || !schoolYearStartDateInput || !schoolYearEndDateInput) {
+    return;
+  }
+
+  const [startYearRaw, endYearRaw] = normalizedSchoolYear.split('-');
+  const startYear = Number(startYearRaw);
+  const endYear = Number(endYearRaw);
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) {
+    return;
+  }
+
+  schoolYearStartDateInput.value = `${startYear}-06-01`;
+  schoolYearEndDateInput.value = `${endYear}-05-31`;
+}
+
+if (schoolYearInput && schoolYearHiddenInput && schoolYearStartDateInput && schoolYearEndDateInput) {
+  const syncSchoolYearFromText = () => {
+    const normalizedSchoolYear = normalizeSchoolYearValue(schoolYearInput.value);
+    if (!normalizedSchoolYear) {
+      return '';
+    }
+
+    schoolYearInput.value = normalizedSchoolYear;
+    schoolYearHiddenInput.value = normalizedSchoolYear;
+    syncDateInputsFromSchoolYear(normalizedSchoolYear);
+    return normalizedSchoolYear;
+  };
+
+  const syncSchoolYearFromDates = () => {
+    const nextGeneratedSchoolYear = calculateSchoolYearFromDates(
+      schoolYearStartDateInput.value,
+      schoolYearEndDateInput.value
+    );
+
+    const resolvedSchoolYear = nextGeneratedSchoolYear || normalizeSchoolYearValue(schoolYearInput.value) || schoolYearHiddenInput.value || '';
+    schoolYearInput.value = resolvedSchoolYear;
+    schoolYearHiddenInput.value = resolvedSchoolYear;
+    return resolvedSchoolYear;
+  };
+
+  if (!syncSchoolYearFromText()) {
+    syncSchoolYearFromDates();
+  }
+
+  schoolYearInput.addEventListener('input', () => {
+    const normalizedSchoolYear = normalizeSchoolYearValue(schoolYearInput.value);
+    schoolYearHiddenInput.value = normalizedSchoolYear || schoolYearHiddenInput.value || '';
+  });
+  schoolYearInput.addEventListener('change', syncSchoolYearFromText);
+  schoolYearInput.addEventListener('blur', syncSchoolYearFromText);
+  schoolYearStartDateInput.addEventListener('input', syncSchoolYearFromDates);
+  schoolYearEndDateInput.addEventListener('input', syncSchoolYearFromDates);
+  schoolYearStartDateInput.addEventListener('change', syncSchoolYearFromDates);
+  schoolYearEndDateInput.addEventListener('change', syncSchoolYearFromDates);
+
+  studentEditForm?.addEventListener('submit', () => {
+    if (!syncSchoolYearFromText()) {
+      syncSchoolYearFromDates();
+    }
   });
 }
 

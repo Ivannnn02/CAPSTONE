@@ -75,16 +75,34 @@ function ensureBatchAssignmentsTable(mysqli $conn): void
             grade_level VARCHAR(50) NOT NULL,
             batch_name VARCHAR(50) NOT NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uniq_enrollment (enrollment_id),
-            UNIQUE KEY uniq_student_sy_grade (student_id, school_year, grade_level)
+            UNIQUE KEY uniq_student_sy_grade (student_id, school_year, grade_level),
+            UNIQUE KEY uniq_enrollment_sy_grade (enrollment_id, school_year, grade_level)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
     );
 
     // Backward compatibility if table existed before enrollment_id column was added.
     $colCheck = $conn->query("SHOW COLUMNS FROM batch_assignments LIKE 'enrollment_id'");
-    if ($colCheck->num_rows === 0) {
+    if ($colCheck && $colCheck->num_rows === 0) {
         $conn->query("ALTER TABLE batch_assignments ADD COLUMN enrollment_id INT NOT NULL DEFAULT 0 AFTER id");
-        $conn->query("ALTER TABLE batch_assignments ADD UNIQUE KEY uniq_enrollment (enrollment_id)");
+    }
+    if ($colCheck) {
+        $colCheck->close();
+    }
+
+    $oldIndexCheck = $conn->query("SHOW INDEX FROM batch_assignments WHERE Key_name = 'uniq_enrollment'");
+    if ($oldIndexCheck && $oldIndexCheck->num_rows > 0) {
+        $conn->query("ALTER TABLE batch_assignments DROP INDEX uniq_enrollment");
+    }
+    if ($oldIndexCheck) {
+        $oldIndexCheck->close();
+    }
+
+    $comboIndexCheck = $conn->query("SHOW INDEX FROM batch_assignments WHERE Key_name = 'uniq_enrollment_sy_grade'");
+    if ($comboIndexCheck && $comboIndexCheck->num_rows === 0) {
+        $conn->query("ALTER TABLE batch_assignments ADD UNIQUE KEY uniq_enrollment_sy_grade (enrollment_id, school_year, grade_level)");
+    }
+    if ($comboIndexCheck) {
+        $comboIndexCheck->close();
     }
 }
 
@@ -136,45 +154,68 @@ if ($selectedSchoolYear === '' || $selectedGrade === '') {
         }
 
         $sql = "
-            SELECT
-                e.id AS enrollment_id,
-                COALESCE(e.student_id, '') AS student_id,
-                COALESCE(e.learner_lname, '') AS learner_lname,
-                COALESCE(e.learner_fname, '') AS learner_fname,
-                COALESCE(e.learner_mname, '') AS learner_mname,
-                COALESCE(e.sex, '') AS sex,
-                COALESCE(e.grade_level, '') AS grade_level,
-                COALESCE(e.school_year, '') AS school_year,
-                COALESCE(ba.batch_name, '') AS assigned_batch
-            FROM enrollments e
-            LEFT JOIN batch_assignments ba
-                ON ba.enrollment_id = e.id
-            WHERE COALESCE(e.grade_level, '') = ?
-              AND COALESCE(e.school_year, '') = ?
+            SELECT *
+            FROM (
+                SELECT
+                    e.id AS enrollment_id,
+                    COALESCE(e.student_id, '') AS student_id,
+                    COALESCE(e.learner_lname, '') AS learner_lname,
+                    COALESCE(e.learner_fname, '') AS learner_fname,
+                    COALESCE(e.learner_mname, '') AS learner_mname,
+                    COALESCE(e.sex, '') AS sex,
+                    COALESCE(e.grade_level, '') AS grade_level,
+                    COALESCE(e.school_year, '') AS school_year,
+                    COALESCE(ba_current.batch_name, '') AS assigned_batch
+                FROM enrollments e
+                LEFT JOIN batch_assignments ba_current
+                    ON ba_current.enrollment_id = e.id
+                   AND COALESCE(ba_current.school_year, '') = ?
+                   AND COALESCE(ba_current.grade_level, '') = ?
+                WHERE COALESCE(e.grade_level, '') = ?
+                  AND COALESCE(e.school_year, '') = ?
+
+                UNION
+
+                SELECT
+                    e.id AS enrollment_id,
+                    COALESCE(ba.student_id, COALESCE(e.student_id, '')) AS student_id,
+                    COALESCE(e.learner_lname, '') AS learner_lname,
+                    COALESCE(e.learner_fname, '') AS learner_fname,
+                    COALESCE(e.learner_mname, '') AS learner_mname,
+                    COALESCE(e.sex, '') AS sex,
+                    COALESCE(ba.grade_level, '') AS grade_level,
+                    COALESCE(ba.school_year, '') AS school_year,
+                    COALESCE(ba.batch_name, '') AS assigned_batch
+                FROM batch_assignments ba
+                INNER JOIN enrollments e
+                    ON e.id = ba.enrollment_id
+                WHERE COALESCE(ba.school_year, '') = ?
+                  AND COALESCE(ba.grade_level, '') = ?
+            ) AS student_source
         ";
 
         if ($selectedBatchFilter !== '') {
-            $sql .= " AND COALESCE(ba.batch_name, '') = ? ";
+            $sql .= " WHERE COALESCE(student_source.assigned_batch, '') = ? ";
         }
 
         $sql .= "
             ORDER BY
-                CASE WHEN COALESCE(ba.batch_name, '') = '' THEN 1 ELSE 0 END,
-                ba.batch_name ASC,
+                CASE WHEN COALESCE(student_source.assigned_batch, '') = '' THEN 1 ELSE 0 END,
+                student_source.assigned_batch ASC,
                 CASE
-                    WHEN LOWER(COALESCE(e.sex, '')) = 'male' THEN 1
-                    WHEN LOWER(COALESCE(e.sex, '')) = 'female' THEN 2
+                    WHEN LOWER(COALESCE(student_source.sex, '')) = 'male' THEN 1
+                    WHEN LOWER(COALESCE(student_source.sex, '')) = 'female' THEN 2
                     ELSE 3
                 END,
-                e.learner_lname ASC,
-                e.learner_fname ASC
+                student_source.learner_lname ASC,
+                student_source.learner_fname ASC
         ";
 
         $stmt = $conn->prepare($sql);
         if ($selectedBatchFilter !== '') {
-            $stmt->bind_param('sss', $selectedGrade, $selectedSchoolYear, $selectedBatchFilter);
+            $stmt->bind_param('sssssss', $selectedSchoolYear, $selectedGrade, $selectedGrade, $selectedSchoolYear, $selectedSchoolYear, $selectedGrade, $selectedBatchFilter);
         } else {
-            $stmt->bind_param('ss', $selectedGrade, $selectedSchoolYear);
+            $stmt->bind_param('ssssss', $selectedSchoolYear, $selectedGrade, $selectedGrade, $selectedSchoolYear, $selectedSchoolYear, $selectedGrade);
         }
         $stmt->execute();
         $result = $stmt->get_result();

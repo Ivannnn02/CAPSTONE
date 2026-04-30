@@ -19,12 +19,38 @@ $fieldReadonlyAttr = static fn(string $fieldKey, bool $readOnlyWhenActive = fals
     ? ($readOnlyWhenActive ? 'readonly' : '')
     : 'disabled';
 $fieldLabelsForJs = [];
+$religionOptions = [
+    'Roman Catholic',
+    'Islam',
+    'Iglesia ni Cristo',
+    'Aglipayan',
+    'Born Again Christian',
+    'Christianity',
+    'Protestant',
+    'Baptist',
+    'Methodist',
+    'Lutheran',
+    'Presbyterian',
+    'Seventh-day Adventist',
+    'Jehovah\'s Witnesses',
+    'The Church of Jesus Christ of Latter-day Saints',
+    'Orthodox Christian',
+    'Judaism',
+    'Hinduism',
+    'Buddhism',
+    'Sikhism',
+    'Taoism',
+    'Confucianism',
+    'Shinto',
+    'Indigenous Beliefs',
+    'No Religion',
+    'Other',
+];
 
 foreach ($builtinFieldMap as $fieldKey => $fieldRow) {
     $fieldLabelsForJs[$fieldKey] = (string)$builtinLabel((string)$fieldKey);
 }
 
-$showCompletionDateField = $isBuiltinActive('completion_date');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -68,15 +94,6 @@ $showCompletionDateField = $isBuiltinActive('completion_date');
     </div>
 
 <form id="enrollmentForm" action="save_enrollment.php" method="POST">
-
-    <?php if ($showCompletionDateField): ?>
-        <div class="form-top">
-            <div class="completion-date">
-                <label for="completionDate"><?php echo htmlspecialchars($builtinLabel('completion_date')); ?>:</label>
-                <input type="date" id="completionDate" name="completion_date" <?php echo $fieldDisabledAttr('completion_date'); ?>>
-            </div>
-        </div>
-    <?php endif; ?>
 
     <?php if (!empty($customFieldsBySection['Enrollment Info'])): ?>
         <section class="form-section">
@@ -190,7 +207,7 @@ $showCompletionDateField = $isBuiltinActive('completion_date');
             <div class="form-grid one">
                 <div class="form-group<?php echo $fieldGroupClass('nickname'); ?>">
                     <label><?php echo htmlspecialchars($builtinLabel('nickname')); ?></label>
-                    <input type="text" placeholder="<?php echo htmlspecialchars($builtinLabel('nickname')); ?>" name="nickname" <?php echo $fieldDisabledAttr('nickname'); ?>>
+                    <input type="text" placeholder="<?php echo htmlspecialchars($builtinLabel('nickname')); ?> (Optional)" name="nickname" <?php echo $fieldDisabledAttr('nickname'); ?>>
 
                 </div>
     <div class="form-group<?php echo $fieldGroupClass('sex'); ?>">
@@ -254,7 +271,12 @@ $showCompletionDateField = $isBuiltinActive('completion_date');
 
                 <div class="form-group<?php echo $fieldGroupClass('religion'); ?>">
                     <label><?php echo htmlspecialchars($builtinLabel('religion')); ?></label>
-                    <input type="text" placeholder="<?php echo htmlspecialchars($builtinLabel('religion')); ?>" name="religion" <?php echo $fieldDisabledAttr('religion'); ?>>
+                    <select name="religion" <?php echo $fieldDisabledAttr('religion'); ?>>
+                        <option value="">Select Religion</option>
+                        <?php foreach ($religionOptions as $religionOption): ?>
+                            <option value="<?php echo htmlspecialchars($religionOption); ?>"><?php echo htmlspecialchars($religionOption); ?></option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
 
                 <div class="form-group<?php echo $fieldGroupClass('email'); ?>">
@@ -381,7 +403,7 @@ $showCompletionDateField = $isBuiltinActive('completion_date');
         <div class="form-grid one">
             <div class="form-group<?php echo $fieldGroupClass('father_contact'); ?>">
                 <label><?php echo htmlspecialchars($builtinLabel('father_contact')); ?></label>
-                <input type="text" name="father_contact" placeholder="<?php echo htmlspecialchars($builtinLabel('father_contact')); ?>" <?php echo $fieldDisabledAttr('father_contact'); ?>>
+                <input type="text" name="father_contact" placeholder="09XXXXXXXXX or N/A" <?php echo $fieldDisabledAttr('father_contact'); ?>>
             </div>
         </div>
 
@@ -436,7 +458,7 @@ $showCompletionDateField = $isBuiltinActive('completion_date');
         <div class="form-grid one">
             <div class="form-group<?php echo $fieldGroupClass('mother_contact'); ?>">
                 <label><?php echo htmlspecialchars($builtinLabel('mother_contact')); ?></label>
-                <input type="text" name="mother_contact" placeholder="<?php echo htmlspecialchars($builtinLabel('mother_contact')); ?>" <?php echo $fieldDisabledAttr('mother_contact'); ?>>
+                <input type="text" name="mother_contact" placeholder="09XXXXXXXXX or N/A" <?php echo $fieldDisabledAttr('mother_contact'); ?>>
             </div>
         </div>
 
@@ -511,7 +533,7 @@ $showCompletionDateField = $isBuiltinActive('completion_date');
         <div class="form-grid one">
             <div class="form-group<?php echo $fieldGroupClass('guardian_contact'); ?>">
                 <label><?php echo htmlspecialchars($builtinLabel('guardian_contact')); ?></label>
-                <input type="text" name="guardian_contact" <?php echo $fieldReadonlyAttr('guardian_contact', $isBuiltinActive('guardian_type')); ?>>
+                <input type="text" name="guardian_contact" placeholder="09XXXXXXXXX or N/A" <?php echo $fieldReadonlyAttr('guardian_contact', $isBuiltinActive('guardian_type')); ?>>
             </div>
         </div>
 
@@ -550,7 +572,7 @@ $showCompletionDateField = $isBuiltinActive('completion_date');
                     <br>
                     <small>(e.g. physical, mental, social disability, giftedness, among others)</small>
                 </label>
-                <input type="text" name="special_needs" placeholder="Specify if any" <?php echo $fieldDisabledAttr('special_needs'); ?>>
+                <input type="text" name="special_needs" placeholder="Type N/A if none" <?php echo $fieldDisabledAttr('special_needs'); ?>>
             </div>
         </div>
 
@@ -615,7 +637,7 @@ $showCompletionDateField = $isBuiltinActive('completion_date');
 
             <div class="form-group<?php echo $fieldGroupClass('emergency1_contact'); ?>">
                 <label><?php echo htmlspecialchars($builtinLabel('emergency1_contact')); ?></label>
-                <input type="tel" name="emergency1_contact" placeholder="09XXXXXXXXX" <?php echo $fieldDisabledAttr('emergency1_contact'); ?>>
+                <input type="text" name="emergency1_contact" placeholder="09XXXXXXXXX or N/A" <?php echo $fieldDisabledAttr('emergency1_contact'); ?>>
             </div>
 
             <div class="form-group<?php echo $fieldGroupClass('emergency1_relationship'); ?>">
@@ -636,7 +658,7 @@ $showCompletionDateField = $isBuiltinActive('completion_date');
 
             <div class="form-group<?php echo $fieldGroupClass('emergency2_contact'); ?>">
                 <label><?php echo htmlspecialchars($builtinLabel('emergency2_contact')); ?></label>
-                <input type="tel" name="emergency2_contact" placeholder="09XXXXXXXXX" disabled>
+                <input type="text" name="emergency2_contact" placeholder="09XXXXXXXXX or N/A" disabled>
             </div>
 
             <div class="form-group<?php echo $fieldGroupClass('emergency2_relationship'); ?>">
@@ -657,7 +679,7 @@ $showCompletionDateField = $isBuiltinActive('completion_date');
 
             <div class="form-group<?php echo $fieldGroupClass('emergency3_contact'); ?>">
                 <label><?php echo htmlspecialchars($builtinLabel('emergency3_contact')); ?></label>
-                <input type="tel" name="emergency3_contact" placeholder="09XXXXXXXXX" disabled>
+                <input type="text" name="emergency3_contact" placeholder="09XXXXXXXXX or N/A" disabled>
             </div>
 
             <div class="form-group<?php echo $fieldGroupClass('emergency3_relationship'); ?>">

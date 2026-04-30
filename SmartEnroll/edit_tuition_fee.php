@@ -184,6 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? '') === '
         }
 
         smartenroll_save_grade_breakdown_components($breakdownData);
+        smartenroll_sync_tuition_payment_totals();
         header('Location: edit_tuition_fee.php?status=saved');
         exit;
     } catch (Throwable $e) {
@@ -197,28 +198,21 @@ if (($_GET['status'] ?? '') === 'saved') {
 
 $gradeLevels = [];
 $gradeBreakdowns = [];
+$gradePaymentPlans = [];
 
 try {
     $gradeLevels = smartenroll_get_grade_levels();
-    $savedComponents = smartenroll_get_grade_breakdown_components();
     $templates = smartenroll_grade_breakdown_templates();
 
-    // Merge saved components with templates
     foreach ($gradeLevels as $grade) {
         $gradeKey = (string)$grade['grade_key'];
-        $gradeLabel = (string)$grade['grade_label'];
-        
-        if (isset($savedComponents[$gradeKey]) && !empty($savedComponents[$gradeKey])) {
-            $gradeBreakdowns[$gradeLabel] = $savedComponents[$gradeKey];
-        } elseif (isset($templates[$gradeLabel])) {
-            $gradeBreakdowns[$gradeLabel] = $templates[$gradeLabel];
-        } else {
-            $gradeBreakdowns[$gradeLabel] = ['Tuition Fee' => (float)$grade['tuition_fee']];
-        }
+        $gradeBreakdowns[$gradeKey] = $templates[$gradeKey] ?? ['Tuition Fee' => (float)$grade['tuition_fee']];
+        $gradePaymentPlans[$gradeKey] = smartenroll_resolve_grade_payment_plans($gradeKey);
     }
 } catch (Throwable $e) {
     $gradeLevels = [];
     $gradeBreakdowns = [];
+    $gradePaymentPlans = [];
     if ($errorMessage === '') {
         $errorMessage = $e->getMessage();
     }
@@ -262,7 +256,7 @@ try {
 
         <div class="settings-intro">
             <h2>Tuition Fees by Grade Level</h2>
-            <p>Edit the breakdown of fees for each grade level. Each component can be customized.</p>
+            <p>Edit the annual fee breakdown and review the exact payment-plan rates used in tuition receipt details.</p>
         </div>
 
         <form method="post">
@@ -271,12 +265,76 @@ try {
             <?php foreach ($gradeLevels as $gradeRow): ?>
                 <?php $gradeKey = (string)$gradeRow['grade_key']; ?>
                 <?php $gradeLabel = (string)$gradeRow['grade_label']; ?>
-                <?php $breakdown = $gradeBreakdowns[$gradeLabel] ?? []; ?>
+                <?php $breakdown = $gradeBreakdowns[$gradeKey] ?? []; ?>
+                <?php $planSummary = $gradePaymentPlans[$gradeKey] ?? []; ?>
 
                 <div class="settings-subsection">
                     <h3 class="detail-section-title"><?php echo htmlspecialchars($gradeLabel); ?></h3>
                     
                     <input type="hidden" name="grade_key[]" value="<?php echo htmlspecialchars($gradeKey); ?>">
+
+                    <div class="grade-plan-panel">
+                        <div class="grade-plan-panel-head">
+                            <div>
+                                <span class="grade-plan-eyebrow">Payment Plan Rates</span>
+                                <p>These are the exact rates currently used in tuition receipt details for this grade level.</p>
+                            </div>
+                        </div>
+
+                        <div class="grade-plan-grid">
+                            <?php foreach (['annual', 'semestral', 'monthly'] as $planKey): ?>
+                                <?php if (!isset($planSummary[$planKey]) || !is_array($planSummary[$planKey])) { continue; } ?>
+                                <?php
+                                    $plan = $planSummary[$planKey];
+                                    $planRules = is_array($plan['item_rules'] ?? null) ? $plan['item_rules'] : [];
+                                    $paymentCountLabel = $planKey === 'monthly'
+                                        ? '10 months'
+                                        : ($planKey === 'semestral' ? '2 payments' : '1 payment');
+                                    $coreOption = trim((string)($plan['core_option'] ?? ''));
+                                    $planDiscountAmount = max(0, round((float)($plan['discount_amount'] ?? 0), 2));
+                                    $planDiscountPercent = max(0, round((float)($plan['discount_percent'] ?? 0), 2));
+                                    $planDiscountLabel = $planDiscountAmount > 0
+                                        ? 'Discount: PHP ' . number_format($planDiscountAmount, 2)
+                                            . ($planDiscountPercent > 0 ? ' (' . number_format($planDiscountPercent, 0) . '%)' : '')
+                                        : 'No discount';
+                                ?>
+                                <div class="grade-plan-field">
+                                    <span class="grade-plan-label-row">
+                                        <strong><?php echo htmlspecialchars((string)($plan['label'] ?? ucfirst($planKey))); ?></strong>
+                                        <small><?php echo htmlspecialchars($paymentCountLabel); ?></small>
+                                    </span>
+                                    <span class="grade-plan-total">
+                                        Total: <?php echo htmlspecialchars('PHP ' . number_format((float)($plan['program_total'] ?? 0), 2)); ?>
+                                    </span>
+                                    <span class="grade-plan-discount-note">
+                                        <?php echo htmlspecialchars($planDiscountLabel); ?>
+                                    </span>
+                                    <div class="grade-plan-rate-list">
+                                        <?php foreach ($planRules as $itemLabel => $rule): ?>
+                                            <?php
+                                                $displayLabel = trim((string)$itemLabel);
+                                                if ($planKey === 'monthly' && $displayLabel === $coreOption) {
+                                                    $displayLabel = 'Monthly Tuition Fee';
+                                                }
+                                                $repeatCount = max(1, (int)($rule['repeat_count'] ?? 1));
+                                                $rateAmount = round((float)($rule['amount'] ?? 0), 2);
+                                                $rateNote = $planKey === 'monthly' && trim((string)$itemLabel) === $coreOption
+                                                    ? 'per month'
+                                                    : ($repeatCount > 1 ? 'x ' . $repeatCount : '');
+                                            ?>
+                                            <div class="grade-plan-rate-row">
+                                                <span><?php echo htmlspecialchars($displayLabel); ?></span>
+                                                <strong><?php echo htmlspecialchars(number_format($rateAmount, 2)); ?></strong>
+                                                <?php if ($rateNote !== ''): ?>
+                                                    <small><?php echo htmlspecialchars($rateNote); ?></small>
+                                                <?php endif; ?>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
 
                     <div class="grade-breakdown-table-wrap">
                         <table class="grade-breakdown-table" data-grade-key="<?php echo htmlspecialchars($gradeKey, ENT_QUOTES); ?>">
@@ -335,7 +393,7 @@ try {
             <?php endforeach; ?>
 
             <div class="settings-actions">
-                <span class="settings-help">Use numbers only. Example: `72740.00`</span>
+                <span class="settings-help">Use numbers only. Example: `72740.00`.</span>
                 <button type="submit" class="settings-save-btn">Save Tuition Fees</button>
             </div>
         </form>

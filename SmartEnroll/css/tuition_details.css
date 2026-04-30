@@ -635,6 +635,35 @@
     font-weight: 700;
 }
 
+.history-subsection {
+    margin-top: 28px;
+}
+
+.history-panel-head {
+    margin-bottom: 14px;
+}
+
+.history-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.history-status.sent {
+    background: #e8f7ee;
+    color: #15803d;
+}
+
+.history-status.pending {
+    background: #fef3c7;
+    color: #b45309;
+}
+
 @media (max-width: 820px) {
     .grade-summary-cards {
         grid-template-columns: 1fr;

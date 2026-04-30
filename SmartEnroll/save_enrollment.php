@@ -19,6 +19,121 @@ function normalize_key(string $key): string
     return trim($key, '_');
 }
 
+function smartenroll_save_enrollment_school_year_session_key(): string
+{
+    return 'editable_enrollment_form_school_year';
+}
+
+function smartenroll_save_enrollment_normalize_school_year(string $schoolYearRaw): string
+{
+    $trimmed = trim($schoolYearRaw);
+    if ($trimmed === '') {
+        return '';
+    }
+
+    if (preg_match_all('/\d{4}/', $trimmed, $matches) < 1 || empty($matches[0])) {
+        return '';
+    }
+
+    $years = array_values(array_map('intval', $matches[0]));
+    $startYear = (int)$years[0];
+    if ($startYear <= 0) {
+        return '';
+    }
+
+    $endYear = isset($years[1]) ? (int)$years[1] : ($startYear + 1);
+    if ($endYear < $startYear) {
+        $endYear = $startYear + 1;
+    }
+
+    return $startYear . '-' . $endYear;
+}
+
+function smartenroll_save_enrollment_school_year_from_reference_date(string $referenceDateRaw, int $startMonth = 6): string
+{
+    $ts = $referenceDateRaw !== '' ? strtotime($referenceDateRaw) : false;
+    if ($ts === false) {
+        $ts = time();
+    }
+
+    $month = (int)date('n', $ts);
+    $year = (int)date('Y', $ts);
+    $startYear = $month >= $startMonth ? $year : ($year - 1);
+
+    return $startYear . '-' . ($startYear + 1);
+}
+
+function smartenroll_save_enrollment_school_year_from_date_range(string $startDateRaw, string $endDateRaw): string
+{
+    $startDate = smartenroll_normalize_date_value(trim($startDateRaw));
+    $endDate = smartenroll_normalize_date_value(trim($endDateRaw));
+
+    if ($startDate !== '') {
+        $startYear = (int)date('Y', strtotime($startDate));
+        if ($endDate !== '') {
+            $endYear = (int)date('Y', strtotime($endDate));
+            if ($endYear < $startYear) {
+                $endYear = $startYear + 1;
+            }
+
+            return $startYear . '-' . $endYear;
+        }
+
+        return $startYear . '-' . ($startYear + 1);
+    }
+
+    if ($endDate !== '') {
+        $endYear = (int)date('Y', strtotime($endDate));
+        return ($endYear - 1) . '-' . $endYear;
+    }
+
+    return '';
+}
+
+function smartenroll_save_enrollment_resolve_school_year(string $schoolYearRaw, string $referenceDateRaw = ''): string
+{
+    $normalizedSchoolYear = smartenroll_save_enrollment_normalize_school_year($schoolYearRaw);
+    if ($normalizedSchoolYear !== '') {
+        return $normalizedSchoolYear;
+    }
+
+    return smartenroll_save_enrollment_school_year_from_reference_date($referenceDateRaw);
+}
+
+function smartenroll_save_enrollment_get_editable_school_year_state(): array
+{
+    smartenroll_auth_start_session();
+    $state = $_SESSION[smartenroll_save_enrollment_school_year_session_key()] ?? null;
+
+    return is_array($state) ? $state : [];
+}
+
+function smartenroll_save_enrollment_resolve_input_school_year(array $inputMap): string
+{
+    $completionDateRaw = trim((string)($inputMap['completion_date'] ?? ''));
+    $schoolYearStartDate = trim((string)($inputMap['school_year_start_date'] ?? ''));
+    $schoolYearEndDate = trim((string)($inputMap['school_year_end_date'] ?? ''));
+    $schoolYearRaw = smartenroll_save_enrollment_school_year_from_date_range($schoolYearStartDate, $schoolYearEndDate);
+
+    if ($schoolYearRaw === '') {
+        $schoolYearRaw = trim((string)($inputMap['school_year'] ?? ''));
+    }
+
+    if ($schoolYearRaw === '') {
+        $savedSchoolYearState = smartenroll_save_enrollment_get_editable_school_year_state();
+        $schoolYearRaw = smartenroll_save_enrollment_school_year_from_date_range(
+            (string)($savedSchoolYearState['school_year_start_date'] ?? ''),
+            (string)($savedSchoolYearState['school_year_end_date'] ?? '')
+        );
+
+        if ($schoolYearRaw === '') {
+            $schoolYearRaw = trim((string)($savedSchoolYearState['school_year'] ?? ''));
+        }
+    }
+
+    return smartenroll_save_enrollment_resolve_school_year($schoolYearRaw, $completionDateRaw);
+}
+
 try {
     smartenroll_require_role('finance');
 
@@ -96,20 +211,10 @@ try {
         $data['medication_details'] = '';
     }
 
-    // Auto-compute school year from completion_date when provided (e.g., 2025-2026).
+    // Use the editable enrollment form school-year configuration when available.
+    // Fall back to any posted school-year fields, then completion_date/current date.
     if (in_array('school_year', $columns, true)) {
-        $completionDateRaw = $inputMap['completion_date'] ?? '';
-        $ts = $completionDateRaw !== '' ? strtotime($completionDateRaw) : false;
-
-        if ($ts === false) {
-            $ts = time();
-        }
-
-        $month = (int)date('n', $ts);
-        $year = (int)date('Y', $ts);
-        $startYear = ($month >= 6) ? $year : ($year - 1);
-        $endYear = $startYear + 1;
-        $data['school_year'] = $startYear . '-' . $endYear;
+        $data['school_year'] = smartenroll_save_enrollment_resolve_input_school_year($inputMap);
     }
 
     // Auto-set student_status to 'new' if not provided during new enrollment

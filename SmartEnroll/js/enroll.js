@@ -52,9 +52,15 @@
             return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
         }
 
+        function normalizeNaValue(value) {
+            const trimmedValue = String(value || "").trim();
+            return /^n\s*\/\s*a$/i.test(trimmedValue) ? "N/A" : trimmedValue;
+        }
+
         function isValidContact(contact) {
-            // Philippine mobile number format: starts with 09, 11 digits
-            return /^09\d{9}$/.test(contact);
+            const normalizedContact = normalizeNaValue(contact);
+            // Philippine mobile number format: starts with 09, 11 digits, or explicit N/A.
+            return normalizedContact === "N/A" || /^09\d{9}$/.test(normalizedContact);
         }
         let view = "days";
         let selectedDate = new Date();
@@ -512,12 +518,39 @@
         const optionalFields = new Set([
             "learner_ext",
             "learner_mname",
+            "nickname",
             "father_mname",
             "mother_mname",
             "guardian_mname",
             "age",
             "completion_date"
         ]);
+        const contactFieldNames = [
+            'father_contact',
+            'mother_contact',
+            'guardian_contact',
+            'emergency1_contact',
+            'emergency2_contact',
+            'emergency3_contact'
+        ];
+        const contactInputs = contactFieldNames
+            .map((name) => document.querySelector(`input[name="${name}"]`))
+            .filter(Boolean);
+        const specialNeedsInput = document.querySelector('input[name="special_needs"]');
+
+        function normalizeSpecialValues() {
+            contactInputs.forEach((input) => {
+                if (!(input instanceof HTMLInputElement)) {
+                    return;
+                }
+
+                input.value = normalizeNaValue(input.value);
+            });
+
+            if (specialNeedsInput instanceof HTMLInputElement) {
+                specialNeedsInput.value = normalizeNaValue(specialNeedsInput.value);
+            }
+        }
 
         function showValidationPopup(message = "Please complete all required fields before submitting.") {
             if (!validationPopup) return;
@@ -778,9 +811,23 @@
 
         toggleMedication();
 
+        contactInputs.forEach((input) => {
+            input.addEventListener("blur", () => {
+                input.value = normalizeNaValue(input.value);
+            });
+        });
+
+        if (specialNeedsInput instanceof HTMLInputElement) {
+            specialNeedsInput.addEventListener("blur", () => {
+                specialNeedsInput.value = normalizeNaValue(specialNeedsInput.value);
+            });
+        }
+
         if (submitBtn) {
             submitBtn.addEventListener("click", () => {
                 let valid = true;
+
+                normalizeSpecialValues();
 
                 document.querySelectorAll("input, select, textarea").forEach((el) => {
                     el.classList.remove("input-error");
@@ -823,18 +870,11 @@
                     valid = false;
                 }
 
-                [
-                    'father_contact',
-                    'mother_contact',
-                    'guardian_contact',
-                    'emergency1_contact',
-                    'emergency2_contact',
-                    'emergency3_contact'
-                ].forEach((name) => {
+                contactFieldNames.forEach((name) => {
                     const field = document.querySelector(`input[name="${name}"]:not([disabled])`);
                     if (field && field.value && !isValidContact(field.value)) {
                         field.classList.add("input-error");
-                        showInlineError(field, "Must be 11 digits starting with 09");
+                        showInlineError(field, "Enter 11 digits starting with 09 or type N/A");
                         valid = false;
                     }
                 });

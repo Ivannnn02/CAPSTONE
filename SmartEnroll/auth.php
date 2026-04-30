@@ -43,8 +43,7 @@ function smartenroll_ensure_users_table(mysqli $conn): void
             role VARCHAR(20) NOT NULL,
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_users_employee_id (employee_id),
-            UNIQUE KEY uniq_users_email (email),
-            UNIQUE KEY uniq_users_role (role)
+            UNIQUE KEY uniq_users_email (email)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
     );
 
@@ -52,6 +51,11 @@ function smartenroll_ensure_users_table(mysqli $conn): void
     if ($employeeIdColumn->num_rows === 0) {
         $conn->query("ALTER TABLE users ADD COLUMN employee_id VARCHAR(100) NOT NULL DEFAULT '' AFTER full_name");
         $conn->query("ALTER TABLE users ADD UNIQUE KEY uniq_users_employee_id (employee_id)");
+    }
+
+    $roleIndex = $conn->query("SHOW INDEX FROM users WHERE Key_name = 'uniq_users_role'");
+    if ($roleIndex && $roleIndex->num_rows > 0) {
+        $conn->query("ALTER TABLE users DROP INDEX uniq_users_role");
     }
 }
 

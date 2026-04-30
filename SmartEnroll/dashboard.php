@@ -41,7 +41,6 @@ if ($profileFirstName !== '') {
         <div class="dashboard-profile-dropdown" id="dashboardProfileDropdown">
             <div class="dashboard-profile-summary">
                 <span class="dashboard-profile-name"><?php echo htmlspecialchars($currentUser['full_name'], ENT_QUOTES, 'UTF-8'); ?></span>
-                <span class="dashboard-profile-role">Finance</span>
                 <span class="dashboard-profile-email"><?php echo htmlspecialchars($currentUser['email'], ENT_QUOTES, 'UTF-8'); ?></span>
             </div>
             <a href="editable_enrollment_form.php" class="dashboard-profile-item">
@@ -51,10 +50,6 @@ if ($profileFirstName !== '') {
             <a href="edit_tuition_fee.php" class="dashboard-profile-item">
                 <i class="fa-solid fa-coins"></i>
                 <span>Edit Tuition Fee</span>
-            </a>
-            <a href="dashboard.php" class="dashboard-profile-item">
-                <i class="fa-solid fa-id-badge"></i>
-                <span>Account Details</span>
             </a>
             <a href="login.php?action=logout" class="dashboard-profile-item">
                 <i class="fa-solid fa-right-from-bracket"></i>

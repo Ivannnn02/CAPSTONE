@@ -135,8 +135,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
             $errorMessage = 'Password confirmation does not match.';
         } elseif (smartenroll_find_user_by_email($conn, $registerEmailValue) !== null) {
             $errorMessage = 'That email is already registered.';
-        } elseif (smartenroll_find_user_by_role($conn, $registerRoleValue) !== null) {
-            $errorMessage = 'A unique ' . ucfirst($registerRoleValue) . ' account already exists.';
         } else {
             $passwordHash = password_hash($password, PASSWORD_DEFAULT);
             $verificationCode = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
@@ -194,10 +192,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
             smartenroll_clear_registration_verification();
             $errorMessage = 'That email is already registered.';
             $registerVerificationRequired = false;
-        } elseif (smartenroll_find_user_by_role($conn, (string)$pendingVerification['role']) !== null) {
-            smartenroll_clear_registration_verification();
-            $errorMessage = 'A unique ' . ucfirst((string)$pendingVerification['role']) . ' account already exists.';
-            $registerVerificationRequired = false;
         } else {
             $stmt = $conn->prepare('INSERT INTO users (full_name, employee_id, email, password_hash, role) VALUES (?, ?, ?, ?, ?)');
             $fullName = (string)$pendingVerification['full_name'];
@@ -210,7 +204,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
             $stmt->close();
 
             smartenroll_clear_registration_verification();
-            $successMessage = ucfirst($role) . ' account registered successfully. You can sign in now.';
+            $successMessage = 'Account registered successfully. You can sign in now.';
             $activeTab = 'login';
             $loginEmailValue = $email;
             $registerNameValue = '';
@@ -248,16 +242,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
     <div class="login-panel">
         <div class="login-intro">
             <h1>Welcome to SMARTENROLL</h1>
-                <p>Your official finance workspace for handling enrollment records, requirements, tuition, and receipts.</p>
+                <p>Your official school workspace for handling enrollment records, requirements, tuition, and receipts.</p>
             <p class="login-intro-sub">
-                Built for Adreo Montessori Inc. to keep the finance process organized, accurate, and easy to monitor.
+                Built for Adreo Montessori Inc. to keep enrollment and billing organized, accurate, and easy to monitor.
             </p>
             <p class="login-intro-sub">
                 Sign in to review requirements, confirm enrollment records, and manage billing from one place.
             </p>
             <div class="login-role-note">
                 <h3>Account rules</h3>
-                <p>Employee ID and email address must both be unique for the finance account.</p>
+                <p>Employee ID and email address must both be unique for each account.</p>
             </div>
         </div>
 
@@ -309,7 +303,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
             </section>
 
             <section class="auth-panel <?php echo $activeTab === 'register' ? 'active' : ''; ?>" data-auth-panel="register">
-                <p class="login-subtitle login-subtitle-centered">Create the SMARTENROLL finance account.</p>
+                <p class="login-subtitle login-subtitle-centered">Create your SMARTENROLL account.</p>
                 <?php if ($registerVerificationRequired): ?>
                     <form class="login-form" id="registerVerifyForm" action="login.php" method="post">
                         <input type="hidden" name="auth_action" value="verify_register_code">

@@ -46,6 +46,150 @@
     border-top: 1px solid #eef2f7;
 }
 
+.grade-plan-panel {
+    margin-bottom: 18px;
+    padding: 18px;
+    border: 1px solid #dbe4f0;
+    border-radius: 16px;
+    background:
+        radial-gradient(circle at top right, rgba(30, 136, 229, 0.12), transparent 34%),
+        linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.grade-plan-panel-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.grade-plan-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(29, 78, 216, 0.1);
+    color: #1d4ed8;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.grade-plan-panel-head p {
+    margin: 8px 0 0;
+    color: #667085;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.grade-plan-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 14px;
+}
+
+.grade-plan-field {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid #dbe4f0;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.88);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.grade-plan-field:hover {
+    transform: translateY(-1px);
+    border-color: #bfd3f2;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+
+.grade-plan-label-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.grade-plan-label-row strong {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1f2937;
+}
+
+.grade-plan-label-row small {
+    color: #667085;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.grade-plan-total {
+    color: #1d4ed8;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.grade-plan-discount-note {
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    flex-wrap: wrap;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #eef4ff;
+    color: #1e40af;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.grade-plan-rate-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.grade-plan-rate-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+    align-items: center;
+    padding-top: 10px;
+    border-top: 1px solid #eef2f7;
+}
+
+.grade-plan-rate-row:first-child {
+    padding-top: 0;
+    border-top: none;
+}
+
+.grade-plan-rate-row span {
+    color: #344054;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.grade-plan-rate-row strong {
+    color: #111827;
+    font-size: 14px;
+    font-weight: 700;
+    text-align: right;
+}
+
+.grade-plan-rate-row small {
+    grid-column: 2;
+    color: #667085;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: right;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
 .settings-alert {
     margin-bottom: 18px;
     padding: 14px 16px;
@@ -655,6 +799,37 @@ tr.is-deleted input[data-existing-field-input] {
     min-height: 104px;
 }
 
+.school-year-builder {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.school-year-config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.school-year-config-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.school-year-config-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #475467;
+}
+
+.school-year-help {
+    display: block;
+    color: #667085;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 .edit-item input[readonly],
 .edit-item textarea[readonly],
 .edit-item input:disabled,
@@ -680,6 +855,10 @@ tr.is-deleted input[data-existing-field-input] {
     }
 
     .student-edit-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .school-year-config-grid {
         grid-template-columns: 1fr;
     }
 
@@ -840,6 +1019,24 @@ tr.is-deleted input[data-existing-field-input] {
 }
 
 @media (max-width: 768px) {
+    .grade-plan-panel {
+        padding: 16px;
+    }
+
+    .grade-plan-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .grade-plan-field {
+        padding: 12px;
+    }
+
+    .grade-plan-label-row {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 4px;
+    }
+
     .grade-breakdown-table {
         font-size: 12px;
     }

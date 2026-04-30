@@ -30,6 +30,74 @@ function format_money(?float $amount): string
     return 'PHP ' . number_format((float)$amount, 2);
 }
 
+function build_grade_history_key(?string $gradeLevel, ?string $schoolYear): string
+{
+    $grade = trim((string)$gradeLevel);
+    $schoolYearValue = trim((string)$schoolYear);
+
+    return ($grade !== '' ? $grade : 'Unknown') . '|' . ($schoolYearValue !== '' ? $schoolYearValue : 'N/A');
+}
+
+function decode_saved_payment_items(?string $rawJson, float $amountPaid): array
+{
+    $decoded = json_decode((string)$rawJson, true);
+    if (!is_array($decoded) || $decoded === []) {
+        return [[
+            'option' => 'Tuition Fee',
+            'label' => 'Tuition Fee',
+            'amount' => round($amountPaid, 2),
+        ]];
+    }
+
+    $items = [];
+    foreach ($decoded as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $label = trim((string)($row['label'] ?? $row['option'] ?? ''));
+        $option = trim((string)($row['option'] ?? ($label !== '' ? $label : 'Other')));
+        $amount = round((float)($row['amount'] ?? 0), 2);
+        if ($label === '' || $amount <= 0) {
+            continue;
+        }
+
+        $items[] = [
+            'option' => $option,
+            'label' => $label,
+            'amount' => $amount,
+        ];
+    }
+
+    if ($items === []) {
+        $items[] = [
+            'option' => 'Tuition Fee',
+            'label' => 'Tuition Fee',
+            'amount' => round($amountPaid, 2),
+        ];
+    }
+
+    return $items;
+}
+
+function summarize_payment_items(array $items, string $emptyLabel = 'N/A'): string
+{
+    $labels = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $label = trim((string)($item['label'] ?? $item['option'] ?? ''));
+        if ($label !== '') {
+            $labels[] = $label;
+        }
+    }
+
+    $labels = array_values(array_unique($labels));
+    return $labels !== [] ? implode(', ', $labels) : $emptyLabel;
+}
+
 function send_tuition_details_email(array $student, float $totalTuition, float $amountPaid, float $remainingBalance): bool
 {
     global $lastEmailError;
@@ -118,6 +186,7 @@ $totalTuition = isset($conn) && $conn instanceof mysqli
     ? (smartenroll_resolve_grade_tuition_fee($gradeLevel, $conn) ?? 0.0)
     : (smartenroll_resolve_grade_tuition_fee($gradeLevel) ?? 0.0);
 $amountPaid = 0.0;
+$creditedAmountPaid = 0.0;
 
 if ($student && isset($conn) && $conn instanceof mysqli) {
     $selectedEnrollmentId = (int)($student['id'] ?? 0);
@@ -133,111 +202,285 @@ if ($student && isset($conn) && $conn instanceof mysqli) {
         $selectedStudentId = trim((string)($student['student_id'] ?? ''));
         $currentGradeLevel = trim((string)($student['grade_level'] ?? ''));
         $paymentStmt = $conn->prepare(
-            "SELECT COALESCE(SUM(amount_paid), 0) AS total_paid
+            "SELECT payment_items, amount_paid, tuition_fee
              FROM tuition_payments
              WHERE (enrollment_id = ? OR student_id = ?)
                AND COALESCE(grade_level, '') = ?
-               AND COALESCE(school_year, '') = ?"
+               AND COALESCE(school_year, '') = ?
+               AND amount_paid > 0
+             ORDER BY payment_date DESC, id DESC"
         );
         $paymentStmt->bind_param('iiss', $selectedEnrollmentId, $selectedStudentId, $currentGradeLevel, $selectedSchoolYear);
         $paymentStmt->execute();
-        $paymentRow = $paymentStmt->get_result()->fetch_assoc();
+        $paymentResult = $paymentStmt->get_result();
         $paymentStmt->close();
-        $amountPaid = (float)($paymentRow['total_paid'] ?? 0);
+
+        $resolvedProgramTotal = 0.0;
+        while ($paymentRow = $paymentResult->fetch_assoc()) {
+            if ($resolvedProgramTotal <= 0) {
+                $resolvedProgramTotal = round((float)($paymentRow['tuition_fee'] ?? 0), 2);
+            }
+            $amountPaid += (float)($paymentRow['amount_paid'] ?? 0);
+            $creditedAmountPaid += smartenroll_payment_items_credit_total_from_json(
+                (string)($paymentRow['payment_items'] ?? ''),
+                (float)($paymentRow['amount_paid'] ?? 0)
+            );
+        }
+        if ($resolvedProgramTotal > 0) {
+            $totalTuition = $resolvedProgramTotal;
+        }
+        $amountPaid = round($amountPaid, 2);
+        $creditedAmountPaid = round($creditedAmountPaid, 2);
     }
 }
 
-$remainingBalance = max(0, round($totalTuition - $amountPaid, 2));
+$remainingBalance = max(0, round($totalTuition - $creditedAmountPaid, 2));
 
-// Get grade level history with payment breakdown
+// Get grade-level history, saved invoices, and sent email history per grade.
 $gradeLevelHistory = [];
-$detailedPaymentHistory = []; // For storing detailed transactions per grade level
+$detailedPaymentHistory = [];
+$savedInvoiceHistoryByGrade = [];
+$sentEmailHistoryByGrade = [];
+$currentGradeHistoryKey = '';
 if ($student && isset($conn) && $conn instanceof mysqli) {
     $selectedEnrollmentId = (int)($student['id'] ?? 0);
     $selectedStudentId = trim((string)($student['student_id'] ?? ''));
-    
+    $selectedCurrentGradeLevel = trim((string)($student['grade_level'] ?? ''));
+    $selectedCurrentSchoolYear = trim((string)($student['school_year'] ?? ''));
+    $gradeLevelHistoryMap = [];
+
+    $ensureGradeHistoryEntry = static function (string $gradeLevelValue, string $schoolYearValue, float $annualTotal = 0.0) use (&$gradeLevelHistoryMap, $conn): string {
+        $gradeLevelLabel = trim($gradeLevelValue) !== '' ? trim($gradeLevelValue) : 'Unknown';
+        $schoolYearLabel = trim($schoolYearValue) !== '' ? trim($schoolYearValue) : 'N/A';
+        $gradeKeyValue = build_grade_history_key($gradeLevelValue, $schoolYearValue);
+        $resolvedAnnualTotal = round($annualTotal, 2);
+
+        if ($resolvedAnnualTotal <= 0 && $gradeLevelLabel !== 'Unknown') {
+            $resolvedAnnualTotal = round((float)(smartenroll_resolve_grade_tuition_fee($gradeLevelLabel, $conn) ?? 0.0), 2);
+        }
+
+        if (!isset($gradeLevelHistoryMap[$gradeKeyValue])) {
+            $gradeLevelHistoryMap[$gradeKeyValue] = [
+                'grade_key' => $gradeKeyValue,
+                'grade_level' => $gradeLevelLabel,
+                'school_year' => $schoolYearLabel,
+                'payment_count' => 0,
+                'total_paid' => 0.0,
+                'annual_total' => max(0, $resolvedAnnualTotal),
+                'last_balance' => max(0, $resolvedAnnualTotal),
+                '_latest_balance_recorded' => false,
+            ];
+        } elseif ($annualTotal > 0) {
+            $gradeLevelHistoryMap[$gradeKeyValue]['annual_total'] = $resolvedAnnualTotal;
+            if (empty($gradeLevelHistoryMap[$gradeKeyValue]['_latest_balance_recorded'])) {
+                $gradeLevelHistoryMap[$gradeKeyValue]['last_balance'] = max(0, $resolvedAnnualTotal);
+            }
+        } elseif ($resolvedAnnualTotal > (float)($gradeLevelHistoryMap[$gradeKeyValue]['annual_total'] ?? 0)) {
+            $gradeLevelHistoryMap[$gradeKeyValue]['annual_total'] = $resolvedAnnualTotal;
+            if (empty($gradeLevelHistoryMap[$gradeKeyValue]['_latest_balance_recorded'])) {
+                $gradeLevelHistoryMap[$gradeKeyValue]['last_balance'] = max(0, $resolvedAnnualTotal);
+            }
+        }
+
+        return $gradeKeyValue;
+    };
+
+    if ($selectedCurrentGradeLevel !== '' || $selectedCurrentSchoolYear !== '') {
+        $currentAnnualTotal = round((float)(smartenroll_resolve_grade_tuition_fee($selectedCurrentGradeLevel, $conn) ?? 0.0), 2);
+        $currentGradeHistoryKey = $ensureGradeHistoryEntry($selectedCurrentGradeLevel, $selectedCurrentSchoolYear, $currentAnnualTotal);
+    }
+
     $tableCheck = $conn->query("SHOW TABLES LIKE 'tuition_payments'");
     $hasPaymentsTable = $tableCheck && $tableCheck->num_rows > 0;
     if ($tableCheck) {
         $tableCheck->close();
     }
-    
-    if ($hasPaymentsTable) {
-        // Get summary for each grade level
-        $historyStmt = $conn->prepare(
-            "SELECT 
-                COALESCE(grade_level, 'Unknown') AS grade_level,
-                COALESCE(school_year, 'N/A') AS school_year,
-                COUNT(*) AS payment_count,
-                COALESCE(SUM(amount_paid), 0) AS total_paid,
-                COALESCE(MAX(tuition_fee), 0) AS annual_total
-             FROM tuition_payments
-             WHERE (enrollment_id = ? OR student_id = ?)
-             GROUP BY grade_level, school_year
-             ORDER BY school_year DESC, grade_level"
-        );
-        $historyStmt->bind_param('is', $selectedEnrollmentId, $selectedStudentId);
-        $historyStmt->execute();
-        $historyResult = $historyStmt->get_result();
-        
-        while ($row = $historyResult->fetch_assoc()) {
-            $annualTotal = (float)$row['annual_total'];
-            $totalPaid = (float)$row['total_paid'];
-            $currentBalance = max(0, round($annualTotal - $totalPaid, 2));
-            $gradeKey = trim((string)$row['grade_level']) !== ''
-                ? trim((string)$row['grade_level']) . '|' . trim((string)$row['school_year'])
-                : 'Unknown|' . trim((string)$row['school_year']);
 
-            $gradeLevelHistory[] = [
-                'grade_key' => $gradeKey,
-                'grade_level' => $row['grade_level'],
-                'school_year' => $row['school_year'],
-                'payment_count' => (int)$row['payment_count'],
-                'total_paid' => $totalPaid,
-                'annual_total' => $annualTotal,
-                'last_balance' => $currentBalance
-            ];
-        }
-        $historyStmt->close();
-        
-        // Get detailed payment transactions for each grade level
+    if ($hasPaymentsTable) {
         $detailStmt = $conn->prepare(
-            "SELECT 
+            "SELECT
                 id,
-                grade_level,
-                school_year,
+                COALESCE(grade_level, '') AS grade_level,
+                COALESCE(school_year, '') AS school_year,
                 payment_date,
                 amount_paid,
                 tuition_fee,
                 balance_after,
-                receipt_no
+                receipt_no,
+                payment_items,
+                email_sent,
+                created_at
              FROM tuition_payments
              WHERE (enrollment_id = ? OR student_id = ?)
-             ORDER BY grade_level, payment_date DESC"
+             ORDER BY COALESCE(school_year, '') DESC, COALESCE(grade_level, '') ASC, payment_date DESC, id DESC"
         );
         $detailStmt->bind_param('is', $selectedEnrollmentId, $selectedStudentId);
         $detailStmt->execute();
         $detailResult = $detailStmt->get_result();
-        
+
         while ($row = $detailResult->fetch_assoc()) {
-            $gradeKey = trim((string)$row['grade_level']) !== ''
-                ? trim((string)$row['grade_level']) . '|' . trim((string)$row['school_year'])
-                : 'Unknown|' . trim((string)$row['school_year']);
-            if (!isset($detailedPaymentHistory[$gradeKey])) {
-                $detailedPaymentHistory[$gradeKey] = [];
+            $rowGradeLevel = trim((string)($row['grade_level'] ?? ''));
+            $rowSchoolYear = trim((string)($row['school_year'] ?? ''));
+            $rowTuitionFee = round((float)($row['tuition_fee'] ?? 0), 2);
+            $gradeKey = $ensureGradeHistoryEntry($rowGradeLevel, $rowSchoolYear, $rowTuitionFee);
+            $amountPaidValue = round((float)($row['amount_paid'] ?? 0), 2);
+
+            if ($amountPaidValue <= 0) {
+                continue;
             }
+
+            $gradeLevelHistoryMap[$gradeKey]['payment_count'] = (int)($gradeLevelHistoryMap[$gradeKey]['payment_count'] ?? 0) + 1;
+            $gradeLevelHistoryMap[$gradeKey]['total_paid'] = round((float)($gradeLevelHistoryMap[$gradeKey]['total_paid'] ?? 0) + $amountPaidValue, 2);
+
+            if (empty($gradeLevelHistoryMap[$gradeKey]['_latest_balance_recorded'])) {
+                $gradeLevelHistoryMap[$gradeKey]['last_balance'] = max(0, round((float)($row['balance_after'] ?? 0), 2));
+                $gradeLevelHistoryMap[$gradeKey]['_latest_balance_recorded'] = true;
+            }
+
+            $paymentItems = decode_saved_payment_items((string)($row['payment_items'] ?? ''), $amountPaidValue);
+            $paymentItemsLabel = summarize_payment_items($paymentItems);
+
             $detailedPaymentHistory[$gradeKey][] = [
-                'id' => (int)$row['id'],
-                'payment_date' => $row['payment_date'],
-                'amount_paid' => (float)$row['amount_paid'],
-                'tuition_fee' => (float)$row['tuition_fee'],
-                'balance_after' => (float)$row['balance_after'],
-                'receipt_no' => $row['receipt_no'],
-                'school_year' => $row['school_year']
+                'id' => (int)($row['id'] ?? 0),
+                'payment_date' => (string)($row['payment_date'] ?? ''),
+                'amount_paid' => $amountPaidValue,
+                'tuition_fee' => $rowTuitionFee,
+                'balance_after' => round((float)($row['balance_after'] ?? 0), 2),
+                'receipt_no' => (string)($row['receipt_no'] ?? ''),
+                'school_year' => $rowSchoolYear !== '' ? $rowSchoolYear : 'N/A',
+            ];
+
+            $savedInvoiceHistoryByGrade[$gradeKey][] = [
+                'id' => (int)($row['id'] ?? 0),
+                'payment_date' => (string)($row['payment_date'] ?? ''),
+                'receipt_no' => (string)($row['receipt_no'] ?? ''),
+                'payment_items' => $paymentItemsLabel,
+                'amount_paid' => $amountPaidValue,
+                'balance_after' => round((float)($row['balance_after'] ?? 0), 2),
+                'email_sent' => (int)($row['email_sent'] ?? 0),
             ];
         }
         $detailStmt->close();
     }
+
+    $tableCheck = $conn->query("SHOW TABLES LIKE 'audit_logs'");
+    $hasAuditLogsTable = $tableCheck && $tableCheck->num_rows > 0;
+    if ($tableCheck) {
+        $tableCheck->close();
+    }
+
+    if ($hasAuditLogsTable) {
+        $previewAction = 'tuition_invoice_preview_emailed';
+        $previewStudentPattern = '%"student_id":"' . $selectedStudentId . '"%';
+        $previewStmt = $conn->prepare(
+            "SELECT entity_id, details_json, created_at
+             FROM audit_logs
+             WHERE action = ?
+               AND details_json LIKE ?
+             ORDER BY created_at DESC, id DESC"
+        );
+        $previewStmt->bind_param('ss', $previewAction, $previewStudentPattern);
+        $previewStmt->execute();
+        $previewResult = $previewStmt->get_result();
+
+        while ($previewRow = $previewResult->fetch_assoc()) {
+            $previewDetails = json_decode((string)($previewRow['details_json'] ?? ''), true);
+            if (!is_array($previewDetails)) {
+                continue;
+            }
+
+            $previewGradeLevel = trim((string)($previewDetails['grade_level'] ?? ''));
+            $previewSchoolYear = trim((string)($previewDetails['school_year'] ?? ''));
+            if ($previewGradeLevel === '' && $previewSchoolYear === '') {
+                if (count($gradeLevelHistoryMap) !== 1) {
+                    continue;
+                }
+
+                $onlyGradeEntry = reset($gradeLevelHistoryMap);
+                $previewGradeLevel = trim((string)($onlyGradeEntry['grade_level'] ?? ''));
+                $previewSchoolYear = trim((string)($onlyGradeEntry['school_year'] ?? ''));
+            }
+
+            $previewKey = $ensureGradeHistoryEntry($previewGradeLevel, $previewSchoolYear, 0.0);
+            $previewItems = is_array($previewDetails['items'] ?? null) ? $previewDetails['items'] : [];
+            $sentEmailHistoryByGrade[$previewKey][] = [
+                'sent_at' => (string)($previewRow['created_at'] ?? ''),
+                'type' => 'Preview Email',
+                'invoice_no' => trim((string)($previewRow['entity_id'] ?? '')) !== '' ? (string)$previewRow['entity_id'] : 'N/A',
+                'payment_items' => summarize_payment_items($previewItems, 'No billing item added yet'),
+                'amount' => round((float)($previewDetails['amount'] ?? 0), 2),
+                'email' => trim((string)($previewDetails['email'] ?? '')) !== '' ? (string)$previewDetails['email'] : 'N/A',
+            ];
+        }
+        $previewStmt->close();
+
+        if ($hasPaymentsTable) {
+            $invoiceAction = 'tuition_receipt_emailed';
+            $invoiceStmt = $conn->prepare(
+                "SELECT
+                    al.details_json,
+                    al.created_at,
+                    tp.receipt_no,
+                    tp.amount_paid,
+                    tp.payment_items,
+                    COALESCE(tp.grade_level, '') AS grade_level,
+                    COALESCE(tp.school_year, '') AS school_year
+                 FROM audit_logs al
+                 INNER JOIN tuition_payments tp
+                    ON tp.id = CAST(al.entity_id AS UNSIGNED)
+                 WHERE al.action = ?
+                   AND (tp.enrollment_id = ? OR tp.student_id = ?)
+                 ORDER BY al.created_at DESC, al.id DESC"
+            );
+            $invoiceStmt->bind_param('sis', $invoiceAction, $selectedEnrollmentId, $selectedStudentId);
+            $invoiceStmt->execute();
+            $invoiceResult = $invoiceStmt->get_result();
+
+            while ($invoiceRow = $invoiceResult->fetch_assoc()) {
+                $invoiceGradeLevel = trim((string)($invoiceRow['grade_level'] ?? ''));
+                $invoiceSchoolYear = trim((string)($invoiceRow['school_year'] ?? ''));
+                $invoiceKey = $ensureGradeHistoryEntry($invoiceGradeLevel, $invoiceSchoolYear, 0.0);
+                $invoiceDetails = json_decode((string)($invoiceRow['details_json'] ?? ''), true);
+                if (!is_array($invoiceDetails)) {
+                    $invoiceDetails = [];
+                }
+
+                $invoiceItems = decode_saved_payment_items((string)($invoiceRow['payment_items'] ?? ''), (float)($invoiceRow['amount_paid'] ?? 0));
+                $sentEmailHistoryByGrade[$invoiceKey][] = [
+                    'sent_at' => (string)($invoiceRow['created_at'] ?? ''),
+                    'type' => 'Invoice Email',
+                    'invoice_no' => trim((string)($invoiceRow['receipt_no'] ?? '')) !== '' ? (string)$invoiceRow['receipt_no'] : 'N/A',
+                    'payment_items' => summarize_payment_items($invoiceItems),
+                    'amount' => round((float)($invoiceRow['amount_paid'] ?? 0), 2),
+                    'email' => trim((string)($invoiceDetails['email'] ?? '')) !== '' ? (string)$invoiceDetails['email'] : 'N/A',
+                ];
+            }
+            $invoiceStmt->close();
+        }
+    }
+
+    foreach ($gradeLevelHistoryMap as &$historyEntry) {
+        $historyEntry['annual_total'] = round((float)($historyEntry['annual_total'] ?? 0), 2);
+        $historyEntry['total_paid'] = round((float)($historyEntry['total_paid'] ?? 0), 2);
+        if (empty($historyEntry['_latest_balance_recorded'])) {
+            $historyEntry['last_balance'] = max(0, round((float)$historyEntry['annual_total'] - (float)$historyEntry['total_paid'], 2));
+        } else {
+            $historyEntry['last_balance'] = max(0, round((float)($historyEntry['last_balance'] ?? 0), 2));
+        }
+        unset($historyEntry['_latest_balance_recorded']);
+    }
+    unset($historyEntry);
+
+    $gradeLevelHistory = array_values($gradeLevelHistoryMap);
+    usort($gradeLevelHistory, static function (array $left, array $right): int {
+        $leftSchoolYear = (string)($left['school_year'] ?? '');
+        $rightSchoolYear = (string)($right['school_year'] ?? '');
+        if ($leftSchoolYear !== $rightSchoolYear) {
+            return strcmp($rightSchoolYear, $leftSchoolYear);
+        }
+
+        return strcmp((string)($left['grade_level'] ?? ''), (string)($right['grade_level'] ?? ''));
+    });
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error === '') {
@@ -302,7 +545,6 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                     <div class="tuition-overview-copy">
                         <span class="tuition-overview-label">Student Billing Profile</span>
                         <h2><?php echo htmlspecialchars($studentName); ?></h2>
-                        <p>Review the billing details, payment setup, and current tuition standing for this student.</p>
                     </div>
                     <div class="tuition-overview-meta">
                         <div class="tuition-meta-chip">
@@ -313,10 +555,6 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                             <span>School Year</span>
                             <strong><?php echo htmlspecialchars($schoolYear ?: '—'); ?></strong>
                         </div>
-                        <div class="tuition-meta-chip">
-                            <span>Posting Date</span>
-                            <strong><?php echo htmlspecialchars($completionDate ?: date('Y-m-d')); ?></strong>
-                        </div>
                     </div>
                 </div>
 
@@ -324,46 +562,26 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                     <div class="tuition-summary-card">
                         <span>Total Tuition</span>
                         <strong><?php echo htmlspecialchars(format_money($totalTuition)); ?></strong>
-                        <small>Based on the student's enrolled grade level.</small>
                     </div>
                     <div class="tuition-summary-card">
                         <span>Amount Paid</span>
                         <strong><?php echo htmlspecialchars(format_money($amountPaid)); ?></strong>
-                        <small>Total payments recorded for this student.</small>
                     </div>
                     <div class="tuition-summary-card accent">
                         <span>Remaining Balance</span>
                         <strong><?php echo htmlspecialchars(format_money($remainingBalance)); ?></strong>
-                        <small>Computed as total tuition minus amount paid.</small>
                     </div>
                 </div>
 
                 <div class="tuition-form-section">
                     <div class="tuition-section-head">
                         <h3>Payment Information</h3>
-                        <p>Use this section to review the current payment setup for the student.</p>
                     </div>
 
                     <div class="tuition-form-grid">
                         <div class="tuition-field">
                             <label>Customer/ID No.</label>
                             <input type="text" value="<?php echo htmlspecialchars($student['student_id'] ?? '—'); ?>">
-                        </div>
-                        <div class="tuition-field">
-                            <label>Posting Date</label>
-                            <input type="text" value="<?php echo htmlspecialchars($completionDate ?: date('Y-m-d')); ?>">
-                        </div>
-                        <div class="tuition-field">
-                            <label>Mode of Payment</label>
-                            <select>
-                                <option value="">Select payment mode</option>
-                                <option value="Cash">Cash</option>
-                                <option value="Online Payment">Online Payment</option>
-                            </select>
-                        </div>
-                        <div class="tuition-field">
-                            <label>Official Receipt No.</label>
-                            <input type="text" value="" placeholder="Enter official receipt number">
                         </div>
                         <div class="tuition-field">
                             <label>Student Name</label>
@@ -377,14 +595,6 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                             <label>Campus/Branch</label>
                             <input type="text" value="Adreo Montessori Incorporated">
                         </div>
-                        <div class="tuition-field">
-                            <label>Semester</label>
-                            <select>
-                                <option value="">Select semester</option>
-                                <option value="1st Semester">1st Semester</option>
-                                <option value="2nd Semester">2nd Semester</option>
-                            </select>
-                        </div>
                         <div class="tuition-field tuition-field-wide">
                             <label>Teller/Cashier Name</label>
                             <input type="text" value="adreomontessori@gmail.com">
@@ -397,7 +607,6 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                 <div class="tuition-form-section">
                     <div class="tuition-section-head">
                         <h3>Balance Summary</h3>
-                        <p>Current billing totals pulled from the student's tuition records.</p>
                     </div>
 
                     <div class="tuition-form-grid tuition-balance-grid">
@@ -422,7 +631,6 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                 <div class="tuition-form-section">
                     <div class="tuition-section-head">
                         <h3>Grade Level History</h3>
-                        <p>Select a grade level to view detailed payment records.</p>
                     </div>
 
                     <div class="grade-level-selector">
@@ -440,7 +648,7 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                     <div id="gradeHistoryContainer" style="display: none;">
                         <div class="grade-summary-cards">
                             <div class="grade-summary-card">
-                                <span>Annual Program Total</span>
+                                <span>Program Total</span>
                                 <strong id="annualTotal">PHP 0.00</strong>
                             </div>
                             <div class="grade-summary-card">
@@ -468,6 +676,54 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                                 </tbody>
                             </table>
                         </div>
+
+                        <div class="history-subsection">
+                            <div class="tuition-section-head history-panel-head">
+                                <h4>Saved Invoices</h4>
+                                <p>Saved invoices for the selected grade level.</p>
+                            </div>
+
+                            <div class="payment-details-table">
+                                <table class="payment-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Invoice</th>
+                                            <th>Payment Items</th>
+                                            <th>Total Breakdown</th>
+                                            <th>Remaining Balance</th>
+                                            <th>Email Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="savedInvoiceTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="history-subsection">
+                            <div class="tuition-section-head history-panel-head">
+                                <h4>Sent Email History</h4>
+                                <p>Preview and invoice emails already sent for the selected grade level.</p>
+                            </div>
+
+                            <div class="payment-details-table">
+                                <table class="payment-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Sent</th>
+                                            <th>Type</th>
+                                            <th>Invoice</th>
+                                            <th>Payment Items</th>
+                                            <th>Amount</th>
+                                            <th>Recipient</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="sentEmailTableBody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -494,6 +750,9 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
     // Grade level payment history data
     const detailedPaymentHistory = <?php echo json_encode($detailedPaymentHistory, JSON_UNESCAPED_SLASHES); ?>;
     const gradeLevelHistory = <?php echo json_encode($gradeLevelHistory, JSON_UNESCAPED_SLASHES); ?>;
+    const savedInvoiceHistoryByGrade = <?php echo json_encode($savedInvoiceHistoryByGrade, JSON_UNESCAPED_SLASHES); ?>;
+    const sentEmailHistoryByGrade = <?php echo json_encode($sentEmailHistoryByGrade, JSON_UNESCAPED_SLASHES); ?>;
+    const currentGradeHistoryKey = <?php echo json_encode($currentGradeHistoryKey, JSON_UNESCAPED_SLASHES); ?>;
 </script>
 
 <script src="js/tuition_details.js"></script></body>

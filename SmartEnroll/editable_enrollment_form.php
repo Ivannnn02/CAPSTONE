@@ -26,7 +26,7 @@ function smartenroll_insert_enrollment(array $input): int
             throw new RuntimeException('Unable to read enrollments table columns.');
         }
 
-        $skip = ['id', 'created_at', 'student_id'];
+        $skip = ['id', 'created_at', 'student_id', 'student_status'];
         $data = [];
 
         foreach ($columns as $col) {
@@ -56,15 +56,15 @@ function smartenroll_insert_enrollment(array $input): int
         }
 
         $completionDateRaw = trim((string)($data['completion_date'] ?? ''));
-        $ts = $completionDateRaw !== '' ? strtotime($completionDateRaw) : false;
-        if ($ts === false) {
-            $ts = time();
+        $schoolYearStartDate = trim((string)($input['school_year_start_date'] ?? ''));
+        $schoolYearEndDate = trim((string)($input['school_year_end_date'] ?? ''));
+        $schoolYearRaw = smartenroll_school_year_from_date_range($schoolYearStartDate, $schoolYearEndDate);
+
+        if ($schoolYearRaw === '') {
+            $schoolYearRaw = trim((string)($data['school_year'] ?? ''));
         }
 
-        $month = (int)date('n', $ts);
-        $year = (int)date('Y', $ts);
-        $startYear = $month >= 6 ? $year : ($year - 1);
-        $data['school_year'] = $startYear . '-' . ($startYear + 1);
+        $data['school_year'] = smartenroll_resolve_school_year($schoolYearRaw, $completionDateRaw);
 
         if (empty($data)) {
             throw new RuntimeException('No valid enrollment data was provided.');
@@ -128,6 +128,163 @@ function smartenroll_insert_enrollment(array $input): int
     }
 }
 
+function smartenroll_school_year_default_start_month(): int
+{
+    return 6;
+}
+
+function smartenroll_school_year_from_reference_date(string $referenceDateRaw, int $startMonth): string
+{
+    $ts = $referenceDateRaw !== '' ? strtotime($referenceDateRaw) : false;
+    if ($ts === false) {
+        $ts = time();
+    }
+
+    $month = (int)date('n', $ts);
+    $year = (int)date('Y', $ts);
+    $startYear = $month >= $startMonth ? $year : ($year - 1);
+    return $startYear . '-' . ($startYear + 1);
+}
+
+function smartenroll_school_year_from_date_range(string $startDateRaw, string $endDateRaw): string
+{
+    $startDate = smartenroll_normalize_date_value($startDateRaw);
+    $endDate = smartenroll_normalize_date_value($endDateRaw);
+
+    if ($startDate !== '') {
+        $startYear = (int)date('Y', strtotime($startDate));
+        if ($endDate !== '') {
+            $endYear = (int)date('Y', strtotime($endDate));
+            if ($endYear < $startYear) {
+                $endYear = $startYear + 1;
+            }
+            return $startYear . '-' . $endYear;
+        }
+
+        return $startYear . '-' . ($startYear + 1);
+    }
+
+    if ($endDate !== '') {
+        $endYear = (int)date('Y', strtotime($endDate));
+        return ($endYear - 1) . '-' . $endYear;
+    }
+
+    return '';
+}
+
+function smartenroll_normalize_school_year(string $schoolYearRaw): string
+{
+    $trimmed = trim($schoolYearRaw);
+    if ($trimmed === '') {
+        return '';
+    }
+
+    if (preg_match_all('/\d{4}/', $trimmed, $matches) < 1 || empty($matches[0])) {
+        return '';
+    }
+
+    $years = array_values(array_map('intval', $matches[0]));
+    $startYear = (int)$years[0];
+    if ($startYear <= 0) {
+        return '';
+    }
+
+    $endYear = isset($years[1]) ? (int)$years[1] : ($startYear + 1);
+    if ($endYear < $startYear) {
+        $endYear = $startYear + 1;
+    }
+
+    return $startYear . '-' . $endYear;
+}
+
+function smartenroll_school_year_date_picker_defaults(string $schoolYearRaw): array
+{
+    $normalized = smartenroll_normalize_school_year($schoolYearRaw);
+    if ($normalized === '') {
+        return ['start_date' => '', 'end_date' => ''];
+    }
+
+    [$startYearRaw, $endYearRaw] = array_pad(explode('-', $normalized, 2), 2, '');
+    $startYear = (int)$startYearRaw;
+    $endYear = (int)$endYearRaw;
+    if ($startYear <= 0 || $endYear <= 0) {
+        return ['start_date' => '', 'end_date' => ''];
+    }
+
+    return [
+        'start_date' => sprintf('%04d-06-01', $startYear),
+        'end_date' => sprintf('%04d-05-31', $endYear),
+    ];
+}
+
+function smartenroll_resolve_school_year(string $schoolYearRaw, string $referenceDateRaw = '', ?int $startMonth = null): string
+{
+    $resolvedStartMonth = $startMonth ?? smartenroll_school_year_default_start_month();
+    $normalizedSchoolYear = smartenroll_normalize_school_year($schoolYearRaw);
+    if ($normalizedSchoolYear !== '') {
+        return $normalizedSchoolYear;
+    }
+
+    return smartenroll_school_year_from_reference_date($referenceDateRaw, $resolvedStartMonth);
+}
+
+function smartenroll_editable_enrollment_form_school_year_session_key(): string
+{
+    return 'editable_enrollment_form_school_year';
+}
+
+function smartenroll_build_editable_enrollment_form_school_year_state(array $input): array
+{
+    $completionDateRaw = trim((string)($input['completion_date'] ?? ''));
+    $schoolYearStartDate = smartenroll_normalize_date_value(trim((string)($input['school_year_start_date'] ?? '')));
+    $schoolYearEndDate = smartenroll_normalize_date_value(trim((string)($input['school_year_end_date'] ?? '')));
+    $schoolYearRaw = smartenroll_school_year_from_date_range($schoolYearStartDate, $schoolYearEndDate);
+
+    if ($schoolYearRaw === '') {
+        $schoolYearRaw = trim((string)($input['school_year'] ?? ''));
+    }
+
+    $resolvedSchoolYear = smartenroll_resolve_school_year($schoolYearRaw, $completionDateRaw);
+
+    if ($schoolYearStartDate === '' || $schoolYearEndDate === '') {
+        $defaultDateRange = smartenroll_school_year_date_picker_defaults($resolvedSchoolYear);
+        if ($schoolYearStartDate === '') {
+            $schoolYearStartDate = $defaultDateRange['start_date'];
+        }
+        if ($schoolYearEndDate === '') {
+            $schoolYearEndDate = $defaultDateRange['end_date'];
+        }
+    }
+
+    $computedSchoolYear = smartenroll_school_year_from_date_range($schoolYearStartDate, $schoolYearEndDate);
+    if ($computedSchoolYear !== '') {
+        $resolvedSchoolYear = $computedSchoolYear;
+    }
+
+    return [
+        'school_year' => $resolvedSchoolYear,
+        'school_year_start_date' => $schoolYearStartDate,
+        'school_year_end_date' => $schoolYearEndDate,
+    ];
+}
+
+function smartenroll_store_editable_enrollment_form_school_year_state(array $input): void
+{
+    smartenroll_auth_start_session();
+    $_SESSION[smartenroll_editable_enrollment_form_school_year_session_key()] =
+        smartenroll_build_editable_enrollment_form_school_year_state($input);
+}
+
+function smartenroll_get_editable_enrollment_form_school_year_state(): array
+{
+    smartenroll_auth_start_session();
+    $state = $_SESSION[smartenroll_editable_enrollment_form_school_year_session_key()] ?? null;
+
+    return is_array($state)
+        ? smartenroll_build_editable_enrollment_form_school_year_state($state)
+        : [];
+}
+
 $errorMessage = '';
 $successMessage = '';
 $enrollmentMessage = '';
@@ -149,15 +306,19 @@ $customFieldSectionChoices = array_values(array_filter(
     smartenroll_supported_enrollment_sections(),
     static fn(string $sectionName): bool => $sectionName !== 'Grade Level'
 ));
-$readOnly = ['school_year'];
-$skip = ['id', 'student_id', 'created_at'];
+$readOnly = [];
+$skip = ['id', 'student_id', 'created_at', 'student_status'];
 $hiddenOtherSavedFields = [
     'grade_level',
-    'school_year',
     'enrollment_status',
     'requirements_status',
     'payment_status',
 ];
+$isEnrollmentPostback = $_SERVER['REQUEST_METHOD'] === 'POST'
+    && (($_POST['form_action'] ?? '') === 'save_enrollment_form');
+$schoolYearStartDateValue = trim((string)($_POST['school_year_start_date'] ?? ''));
+$schoolYearEndDateValue = trim((string)($_POST['school_year_end_date'] ?? ''));
+$schoolYearDisplayValue = trim((string)($_POST['school_year'] ?? ''));
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? '') === 'save_grade_levels') {
     try {
@@ -296,6 +457,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? '') === '
 
     try {
         smartenroll_insert_enrollment($_POST);
+        smartenroll_store_editable_enrollment_form_school_year_state($_POST);
         header('Location: editable_enrollment_form.php?enrollment_status=saved');
         exit;
     } catch (Throwable $e) {
@@ -364,7 +526,7 @@ try {
     }
     $conn->close();
 
-    $sectionMap = smartenroll_build_sections($columns, null, ['grade_level', 'school_year']);
+    $sectionMap = smartenroll_build_sections($columns, null, ['grade_level']);
     unset($sectionMap['Grade Level']);
 
     if (isset($sectionMap['Other Saved Fields'])) {
@@ -380,6 +542,44 @@ try {
 
     foreach ($columns as $column) {
         $formValues[$column] = isset($formValues[$column]) ? trim((string)$formValues[$column]) : '';
+    }
+
+    if (!$isEnrollmentPostback) {
+        $savedSchoolYearState = smartenroll_get_editable_enrollment_form_school_year_state();
+        foreach (['school_year', 'school_year_start_date', 'school_year_end_date'] as $fieldKey) {
+            if (($formValues[$fieldKey] ?? '') === '' && ($savedSchoolYearState[$fieldKey] ?? '') !== '') {
+                $formValues[$fieldKey] = (string)$savedSchoolYearState[$fieldKey];
+            }
+        }
+    }
+
+    $schoolYearStartDateValue = trim((string)($formValues['school_year_start_date'] ?? $schoolYearStartDateValue));
+    $schoolYearEndDateValue = trim((string)($formValues['school_year_end_date'] ?? $schoolYearEndDateValue));
+    $schoolYearDisplayValue = smartenroll_school_year_from_date_range($schoolYearStartDateValue, $schoolYearEndDateValue);
+
+    if ($schoolYearDisplayValue === '') {
+        $schoolYearDisplayValue = trim((string)($formValues['school_year'] ?? $schoolYearDisplayValue));
+    }
+    if ($schoolYearDisplayValue === '') {
+        $schoolYearDisplayValue = smartenroll_resolve_school_year(
+            '',
+            trim((string)($formValues['completion_date'] ?? ''))
+        );
+    }
+
+    if (!$isEnrollmentPostback && ($schoolYearStartDateValue === '' || $schoolYearEndDateValue === '')) {
+        $defaultDateRange = smartenroll_school_year_date_picker_defaults($schoolYearDisplayValue);
+        if ($schoolYearStartDateValue === '') {
+            $schoolYearStartDateValue = $defaultDateRange['start_date'];
+        }
+        if ($schoolYearEndDateValue === '') {
+            $schoolYearEndDateValue = $defaultDateRange['end_date'];
+        }
+    }
+
+    $computedSchoolYearDisplay = smartenroll_school_year_from_date_range($schoolYearStartDateValue, $schoolYearEndDateValue);
+    if ($computedSchoolYearDisplay !== '') {
+        $schoolYearDisplayValue = $computedSchoolYearDisplay;
     }
 } catch (Throwable $e) {
     if ($enrollmentError === '') {
@@ -571,7 +771,7 @@ if ($errorMessage === 'This grade level already exists' || str_starts_with($erro
             <div class="settings-alert error"><?php echo htmlspecialchars($enrollmentError); ?></div>
         <?php endif; ?>
 
-        <form method="post">
+        <form method="post" id="enrollmentForm">
             <input type="hidden" name="form_action" value="save_enrollment_form">
 
             <?php if (!empty($customFieldsBySection['Grade Level'])): ?>
@@ -684,15 +884,6 @@ if ($errorMessage === 'This grade level already exists' || str_starts_with($erro
                                             </option>
                                         <?php endforeach; ?>
                                     </select>
-                                <?php elseif ($col === 'student_status'): ?>
-                                    <select name="student_status">
-                                        <option value="">Select Status</option>
-                                        <?php foreach (smartenroll_student_status_options() as $optVal): ?>
-                                            <option value="<?php echo htmlspecialchars($optVal); ?>" <?php echo $val === $optVal ? 'selected' : ''; ?>>
-                                                <?php echo htmlspecialchars($optVal); ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
                                 <?php elseif ($col === 'guardian_type'): ?>
                                     <div class="edit-radio-inline-group">
                                         <?php
@@ -719,6 +910,39 @@ if ($errorMessage === 'This grade level already exists' || str_starts_with($erro
                                                 <span class="edit-choice-button"><?php echo htmlspecialchars($optLabel); ?></span>
                                             </label>
                                         <?php endforeach; ?>
+                                    </div>
+                                <?php elseif ($col === 'school_year'): ?>
+                                    <div class="school-year-builder">
+                                        <input
+                                            type="text"
+                                            name="school_year"
+                                            id="schoolYearInput"
+                                            value="<?php echo htmlspecialchars($schoolYearDisplayValue); ?>"
+                                            placeholder="2025-2026"
+                                            pattern="\d{4}-\d{4}"
+                                            readonly
+                                        >
+                                        <div class="school-year-config-grid">
+                                            <label class="school-year-config-item">
+                                                <span class="school-year-config-label">Start Month</span>
+                                                <input
+                                                    type="date"
+                                                    name="school_year_start_date"
+                                                    id="schoolYearStartDate"
+                                                    value="<?php echo htmlspecialchars(smartenroll_normalize_date_value($schoolYearStartDateValue)); ?>"
+                                                >
+                                            </label>
+                                            <label class="school-year-config-item">
+                                                <span class="school-year-config-label">End Month</span>
+                                                <input
+                                                    type="date"
+                                                    name="school_year_end_date"
+                                                    id="schoolYearEndDate"
+                                                    value="<?php echo htmlspecialchars(smartenroll_normalize_date_value($schoolYearEndDateValue)); ?>"
+                                                >
+                                            </label>
+                                        </div>
+                                        <small class="school-year-help">School year updates automatically from the selected start and end dates.</small>
                                     </div>
                                 <?php elseif (in_array($col, ['guardian_lname', 'guardian_fname', 'guardian_mname', 'guardian_occ', 'guardian_contact'], true)): ?>
                                     <input
@@ -1220,8 +1444,10 @@ if (customFieldsForm) {
 
 const dobInput = document.querySelector('input[name="dob"]');
 const ageInput = document.querySelector('input[name="age"]');
-const completionDateInput = document.querySelector('input[name="completion_date"]');
-const schoolYearInput = document.querySelector('input[name="school_year"]');
+const schoolYearInput = document.getElementById('schoolYearInput');
+const schoolYearStartDateInput = document.getElementById('schoolYearStartDate');
+const schoolYearEndDateInput = document.getElementById('schoolYearEndDate');
+const enrollmentForm = document.getElementById('enrollmentForm');
 
 function calculateAge(dobValue) {
     if (!dobValue) return '';
@@ -1238,15 +1464,28 @@ function calculateAge(dobValue) {
     return age >= 0 ? age : '';
 }
 
-function calculateSchoolYear(dateValue) {
-    if (!dateValue) return '';
-    const completionDate = new Date(dateValue);
-    if (Number.isNaN(completionDate.getTime())) return '';
+function calculateSchoolYearFromDates(startDateValue, endDateValue) {
+    const startDate = startDateValue ? new Date(startDateValue) : null;
+    const endDate = endDateValue ? new Date(endDateValue) : null;
+    const hasValidStartDate = startDate instanceof Date && !Number.isNaN(startDate.getTime());
+    const hasValidEndDate = endDate instanceof Date && !Number.isNaN(endDate.getTime());
 
-    const month = completionDate.getMonth() + 1;
-    const year = completionDate.getFullYear();
-    const startYear = month >= 6 ? year : year - 1;
-    return `${startYear}-${startYear + 1}`;
+    if (hasValidStartDate) {
+        const startYear = startDate.getFullYear();
+        if (hasValidEndDate) {
+            const endYear = endDate.getFullYear();
+            return `${startYear}-${endYear >= startYear ? endYear : startYear + 1}`;
+        }
+
+        return `${startYear}-${startYear + 1}`;
+    }
+
+    if (hasValidEndDate) {
+        const endYear = endDate.getFullYear();
+        return `${endYear - 1}-${endYear}`;
+    }
+
+    return '';
 }
 
 if (dobInput && ageInput) {
@@ -1256,10 +1495,25 @@ if (dobInput && ageInput) {
     });
 }
 
-if (completionDateInput && schoolYearInput) {
-    completionDateInput.addEventListener('change', () => {
-        const schoolYear = calculateSchoolYear(completionDateInput.value);
-        schoolYearInput.value = schoolYear || '';
+if (schoolYearInput && schoolYearStartDateInput && schoolYearEndDateInput) {
+    const syncSchoolYearFromDates = () => {
+        const nextGeneratedSchoolYear = calculateSchoolYearFromDates(
+            schoolYearStartDateInput.value,
+            schoolYearEndDateInput.value
+        );
+        const resolvedSchoolYear = nextGeneratedSchoolYear || schoolYearInput.value || '';
+        schoolYearInput.value = resolvedSchoolYear;
+        return resolvedSchoolYear;
+    };
+
+    syncSchoolYearFromDates();
+    schoolYearStartDateInput.addEventListener('input', syncSchoolYearFromDates);
+    schoolYearEndDateInput.addEventListener('input', syncSchoolYearFromDates);
+    schoolYearStartDateInput.addEventListener('change', syncSchoolYearFromDates);
+    schoolYearEndDateInput.addEventListener('change', syncSchoolYearFromDates);
+
+    enrollmentForm?.addEventListener('submit', () => {
+        syncSchoolYearFromDates();
     });
 }
 

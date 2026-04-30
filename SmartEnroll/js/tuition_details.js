@@ -73,57 +73,176 @@
 })();
 
 // Grade level history dropdown handler
-(function() {
+(function () {
   const dropdown = document.getElementById('gradeLevelDropdown');
   const container = document.getElementById('gradeHistoryContainer');
-  
-  if (!dropdown || !container) return;
+  const annualTotalEl = document.getElementById('annualTotal');
+  const totalPaidEl = document.getElementById('totalPaidForGrade');
+  const balanceEl = document.getElementById('balanceForGrade');
+  const paymentTableBody = document.getElementById('paymentTableBody');
+  const savedInvoiceTableBody = document.getElementById('savedInvoiceTableBody');
+  const sentEmailTableBody = document.getElementById('sentEmailTableBody');
+
+  if (
+    !dropdown ||
+    !container ||
+    !annualTotalEl ||
+    !totalPaidEl ||
+    !balanceEl ||
+    !paymentTableBody ||
+    !savedInvoiceTableBody ||
+    !sentEmailTableBody
+  ) {
+    return;
+  }
+
+  const formatter = new Intl.NumberFormat('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 
   function formatMoney(amount) {
-    return 'PHP ' + parseFloat(amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const numericAmount = Number(amount) || 0;
+    return `PHP ${formatter.format(numericAmount)}`;
   }
 
   function formatDate(dateString) {
-    const date = new Date(dateString + 'T00:00:00');
+    if (!dateString) return 'N/A';
+    const date = new Date(`${dateString}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return dateString;
     const options = { year: 'numeric', month: 'short', day: 'numeric' };
     return date.toLocaleDateString('en-PH', options);
   }
 
-  dropdown.addEventListener('change', function() {
-    const selectedGrade = this.value;
-    
-    if (!selectedGrade || !detailedPaymentHistory[selectedGrade]) {
+  function formatTimestamp(dateString) {
+    if (!dateString) return 'N/A';
+    const normalized = typeof dateString === 'string' ? dateString.replace(' ', 'T') : dateString;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return dateString;
+    const options = {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    };
+    return date.toLocaleString('en-PH', options);
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function renderEmptyRow(tableBody, colspan, message) {
+    const row = document.createElement('tr');
+    row.innerHTML = `<td colspan="${colspan}" style="text-align: center; padding: 20px; color: #999;">${escapeHtml(message)}</td>`;
+    tableBody.appendChild(row);
+  }
+
+  function renderPaymentHistory(gradeKey) {
+    const payments = Array.isArray(detailedPaymentHistory[gradeKey]) ? detailedPaymentHistory[gradeKey] : [];
+    paymentTableBody.innerHTML = '';
+
+    if (payments.length === 0) {
+      renderEmptyRow(paymentTableBody, 5, 'No payments recorded for this grade level.');
+      return;
+    }
+
+    payments.forEach((payment) => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${escapeHtml(formatDate(payment.payment_date))}</td>
+        <td><strong>${escapeHtml(payment.receipt_no || 'N/A')}</strong></td>
+        <td class="amount-col">${escapeHtml(formatMoney(payment.amount_paid))}</td>
+        <td>${escapeHtml(payment.school_year || 'N/A')}</td>
+        <td class="amount-col ${Number(payment.balance_after) > 0 ? 'balance-pending' : 'balance-settled'}">${escapeHtml(formatMoney(payment.balance_after))}</td>
+      `;
+      paymentTableBody.appendChild(row);
+    });
+  }
+
+  function renderSavedInvoices(gradeKey) {
+    const invoices = Array.isArray(savedInvoiceHistoryByGrade[gradeKey]) ? savedInvoiceHistoryByGrade[gradeKey] : [];
+    savedInvoiceTableBody.innerHTML = '';
+
+    if (invoices.length === 0) {
+      renderEmptyRow(savedInvoiceTableBody, 6, 'No saved invoices for this grade level.');
+      return;
+    }
+
+    invoices.forEach((invoice) => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${escapeHtml(formatDate(invoice.payment_date))}</td>
+        <td><strong>${escapeHtml(invoice.receipt_no || 'N/A')}</strong></td>
+        <td>${escapeHtml(invoice.payment_items || 'N/A')}</td>
+        <td class="amount-col">${escapeHtml(formatMoney(invoice.amount_paid))}</td>
+        <td class="amount-col ${Number(invoice.balance_after) > 0 ? 'balance-pending' : 'balance-settled'}">${escapeHtml(formatMoney(invoice.balance_after))}</td>
+        <td><span class="history-status ${Number(invoice.email_sent) === 1 ? 'sent' : 'pending'}">${Number(invoice.email_sent) === 1 ? 'Sent' : 'Not sent'}</span></td>
+      `;
+      savedInvoiceTableBody.appendChild(row);
+    });
+  }
+
+  function renderSentEmails(gradeKey) {
+    const emails = Array.isArray(sentEmailHistoryByGrade[gradeKey]) ? sentEmailHistoryByGrade[gradeKey] : [];
+    sentEmailTableBody.innerHTML = '';
+
+    if (emails.length === 0) {
+      renderEmptyRow(sentEmailTableBody, 6, 'No sent email history for this grade level.');
+      return;
+    }
+
+    emails.forEach((historyRow) => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${escapeHtml(formatTimestamp(historyRow.sent_at))}</td>
+        <td>${escapeHtml(historyRow.type || 'N/A')}</td>
+        <td><strong>${escapeHtml(historyRow.invoice_no || 'N/A')}</strong></td>
+        <td>${escapeHtml(historyRow.payment_items || 'N/A')}</td>
+        <td class="amount-col">${escapeHtml(formatMoney(historyRow.amount))}</td>
+        <td>${escapeHtml(historyRow.email || 'N/A')}</td>
+      `;
+      sentEmailTableBody.appendChild(row);
+    });
+  }
+
+  function renderGradeHistory(gradeKey) {
+    const gradeData = Array.isArray(gradeLevelHistory)
+      ? gradeLevelHistory.find((entry) => entry.grade_key === gradeKey)
+      : null;
+
+    if (!gradeData) {
       container.style.display = 'none';
       return;
     }
 
-    // Find the grade level summary
-    const gradeData = gradeLevelHistory.find(g => g.grade_key === selectedGrade);
-    document.getElementById('balanceForGrade').textContent = formatMoney(remainingBalance);
+    annualTotalEl.textContent = formatMoney(gradeData.annual_total);
+    totalPaidEl.textContent = formatMoney(gradeData.total_paid);
+    balanceEl.textContent = formatMoney(gradeData.last_balance);
+    renderPaymentHistory(gradeKey);
+    renderSavedInvoices(gradeKey);
+    renderSentEmails(gradeKey);
+    container.style.display = 'block';
+  }
 
-    // Populate payment table
-    const payments = detailedPaymentHistory[selectedGrade] || [];
-    const tableBody = document.getElementById('paymentTableBody');
-    tableBody.innerHTML = '';
-
-    if (payments.length === 0) {
-      const row = document.createElement('tr');
-      row.innerHTML = '<td colspan="5" style="text-align: center; padding: 20px; color: #999;">No payments recorded for this grade level.</td>';
-      tableBody.appendChild(row);
-    } else {
-      payments.forEach(payment => {
-        const row = document.createElement('tr');
-        row.innerHTML = `
-          <td>${formatDate(payment.payment_date)}</td>
-          <td><strong>${payment.receipt_no || '—'}</strong></td>
-          <td class="amount-col">${formatMoney(payment.amount_paid)}</td>
-          <td>${payment.school_year}</td>
-          <td class="amount-col ${payment.balance_after > 0 ? 'balance-pending' : 'balance-settled'}">${formatMoney(payment.balance_after)}</td>
-        `;
-        tableBody.appendChild(row);
-      });
+  dropdown.addEventListener('change', function () {
+    const selectedGrade = this.value;
+    if (!selectedGrade) {
+      container.style.display = 'none';
+      return;
     }
 
-    container.style.display = 'block';
+    renderGradeHistory(selectedGrade);
   });
+
+  if (currentGradeHistoryKey && Array.from(dropdown.options).some((option) => option.value === currentGradeHistoryKey)) {
+    dropdown.value = currentGradeHistoryKey;
+    renderGradeHistory(currentGradeHistoryKey);
+  }
 })();

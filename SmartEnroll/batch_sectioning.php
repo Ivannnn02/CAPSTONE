@@ -28,12 +28,50 @@ function bindParamsSafe(mysqli_stmt $stmt, string $types, array $values): void
     call_user_func_array([$stmt, 'bind_param'], $refs);
 }
 
+function ensureBatchAssignmentsTable(mysqli $conn): void
+{
+    $conn->query(
+        "CREATE TABLE IF NOT EXISTS batch_assignments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            enrollment_id INT NOT NULL,
+            student_id VARCHAR(50) NOT NULL,
+            school_year VARCHAR(20) NOT NULL,
+            grade_level VARCHAR(50) NOT NULL,
+            batch_name VARCHAR(50) NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_student_sy_grade (student_id, school_year, grade_level),
+            UNIQUE KEY uniq_enrollment_sy_grade (enrollment_id, school_year, grade_level)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+    );
+
+    $oldIndexCheck = $conn->query("SHOW INDEX FROM batch_assignments WHERE Key_name = 'uniq_enrollment'");
+    if ($oldIndexCheck && $oldIndexCheck->num_rows > 0) {
+        $conn->query("ALTER TABLE batch_assignments DROP INDEX uniq_enrollment");
+    }
+    if ($oldIndexCheck) {
+        $oldIndexCheck->close();
+    }
+
+    $comboIndexCheck = $conn->query("SHOW INDEX FROM batch_assignments WHERE Key_name = 'uniq_enrollment_sy_grade'");
+    if ($comboIndexCheck && $comboIndexCheck->num_rows === 0) {
+        $conn->query("ALTER TABLE batch_assignments ADD UNIQUE KEY uniq_enrollment_sy_grade (enrollment_id, school_year, grade_level)");
+    }
+    if ($comboIndexCheck) {
+        $comboIndexCheck->close();
+    }
+}
+
 try {
     $conn = connectEnrollmentDb();
+    ensureBatchAssignmentsTable($conn);
 
     $schoolYearRes = $conn->query("
-        SELECT DISTINCT COALESCE(school_year, '') AS school_year
-        FROM enrollments
+        SELECT DISTINCT school_year
+        FROM (
+            SELECT COALESCE(school_year, '') AS school_year FROM enrollments
+            UNION
+            SELECT COALESCE(school_year, '') AS school_year FROM batch_assignments
+        ) school_year_source
         WHERE COALESCE(school_year, '') <> ''
         ORDER BY school_year DESC
     ");
@@ -42,8 +80,12 @@ try {
     }
 
     $gradeLevelRes = $conn->query("
-        SELECT DISTINCT COALESCE(grade_level, '') AS grade_level
-        FROM enrollments
+        SELECT DISTINCT grade_level
+        FROM (
+            SELECT COALESCE(grade_level, '') AS grade_level FROM enrollments
+            UNION
+            SELECT COALESCE(grade_level, '') AS grade_level FROM batch_assignments
+        ) grade_level_source
         WHERE COALESCE(grade_level, '') <> ''
         ORDER BY grade_level ASC
     ");
@@ -55,7 +97,13 @@ try {
         SELECT DISTINCT
             COALESCE(school_year, '') AS school_year,
             COALESCE(grade_level, '') AS grade_level
-        FROM enrollments
+        FROM (
+            SELECT COALESCE(school_year, '') AS school_year, COALESCE(grade_level, '') AS grade_level
+            FROM enrollments
+            UNION
+            SELECT COALESCE(school_year, '') AS school_year, COALESCE(grade_level, '') AS grade_level
+            FROM batch_assignments
+        ) placement_source
         WHERE COALESCE(school_year, '') <> ''
           AND COALESCE(grade_level, '') <> ''
     ";

@@ -28,10 +28,13 @@ const totalPaidPreview = document.getElementById('totalPaidPreview');
 const lessAmountPaidPreview = document.getElementById('lessAmountPaidPreview');
 const balanceAfterPreview = document.getElementById('balanceAfterPreview');
 const remainingBalanceDisplay = document.getElementById('remainingBalanceDisplay');
+const selectedPlanTotalDisplay = document.getElementById('selectedPlanTotalDisplay');
+const activePaymentPlanDisplay = document.getElementById('activePaymentPlanDisplay');
 const receiptAddTrigger = document.getElementById('receiptAddTrigger');
 const receiptAddRow = document.querySelector('.receipt-add-row');
 const invoiceEmailTotal = document.getElementById('invoiceEmailTotal');
-const invoiceEmailDueDate = document.getElementById('invoiceEmailDueDate');
+const invoiceEmailDueDateInput = document.getElementById('invoiceEmailDueDateInput');
+const invoiceEmailMetaDueDate = document.getElementById('invoiceEmailMetaDueDate');
 const invoiceEmailNumber = document.getElementById('invoiceEmailNumber');
 const invoiceEmailBodyNumber = document.getElementById('invoiceEmailBodyNumber');
 const invoiceEmailBodyAmount = document.getElementById('invoiceEmailBodyAmount');
@@ -41,19 +44,64 @@ const invoiceEmailItems = document.getElementById('invoiceEmailItems');
 const invoiceEmailPrintTrigger = document.getElementById('invoiceEmailPrintTrigger');
 const invoiceEmailSendTrigger = document.getElementById('invoiceEmailSendTrigger');
 const selectedInvoicePrintTrigger = document.getElementById('selectedInvoicePrintTrigger');
+const paymentPlanInput = document.getElementById('paymentPlanInput');
+const paymentPlanButtons = Array.from(document.querySelectorAll('.payment-plan-btn[data-plan-option]'));
 const gmailHistoryRows = () => Array.from(document.querySelectorAll('#gmail-send-history [data-history-fill]'));
 
 function buildInvoiceEmailCatalogMarkup() {
-  const invoiceEmailCatalogElement = document.getElementById('invoiceEmailCatalog');
-  if (invoiceEmailCatalogElement) {
-    return invoiceEmailCatalogElement.outerHTML;
-  }
-
   if (!paymentCatalog) {
     return '';
   }
 
-  const rows = Array.from(paymentCatalog.querySelectorAll('.catalog-row[data-option]'));
+  const renderInvoiceEmailCatalogRowMarkup = (option, displayLabel, defaultAmount, baseAmount, discountPercent, disabled) => {
+    const normalizedOption = String(option || '').trim();
+    const normalizedLabel = String(displayLabel || normalizedOption).trim() || normalizedOption;
+    const normalizedDefaultAmount = formatInvoiceNumber(parseAmount(defaultAmount));
+    const normalizedBaseAmount = formatInvoiceNumber(parseAmount(baseAmount || defaultAmount));
+    const normalizedDiscountPercent = Number(parseAmount(discountPercent || '0')).toFixed(2);
+    const isDisabled = disabled === true || disabled === 1 || disabled === '1';
+
+    return '<div class="catalog-row invoice-email-catalog-row' + (isDisabled ? ' is-disabled' : '') + '"'
+      + ' data-option="' + escapeHtml(normalizedOption) + '"'
+      + ' data-display-label="' + escapeHtml(normalizedLabel) + '"'
+      + ' data-default="' + escapeHtml(normalizedDefaultAmount) + '"'
+      + ' data-base="' + escapeHtml(normalizedBaseAmount) + '"'
+      + ' data-discount-percent="' + escapeHtml(normalizedDiscountPercent) + '"'
+      + ' data-disabled="' + (isDisabled ? '1' : '0') + '">'
+      + '<button type="button" class="catalog-add-btn" aria-label="Add ' + escapeHtml(normalizedOption) + '"' + (isDisabled ? ' disabled' : '') + '>'
+      + '<i class="fa-solid ' + (isDisabled ? 'fa-check' : 'fa-plus') + '"></i>'
+      + '</button>'
+      + '<div class="receipt-catalog-copy">'
+      + '<strong>' + escapeHtml(normalizedLabel) + '</strong>'
+      + '<span>' + escapeHtml(normalizedDefaultAmount) + '</span>'
+      + '</div>'
+      + '</div>';
+  };
+
+  let monthlyCatalogItems = [];
+  try {
+    const planCatalogs = JSON.parse(paymentCatalog.dataset.planCatalogs || '{}') || {};
+    monthlyCatalogItems = Array.isArray(planCatalogs.monthly?.catalog)
+      ? planCatalogs.monthly.catalog.filter((item) => String(item.option || '').trim() === 'Monthly Payment')
+      : [];
+  } catch (error) {
+    monthlyCatalogItems = [];
+  }
+
+  if (monthlyCatalogItems.length) {
+    return '<div class="payment-catalog-card invoice-email-catalog-menu" id="invoiceEmailCatalog">'
+      + monthlyCatalogItems.map((item) => renderInvoiceEmailCatalogRowMarkup(
+        item.option || '',
+        item.display_label || item.displayLabel || item.option || '',
+        item.default_amount || item.defaultAmount || '0',
+        item.base_amount || item.baseAmount || item.default_amount || item.defaultAmount || '0',
+        item.discount_percent || item.discountPercent || '0',
+        item.disabled
+      )).join('')
+      + '</div>';
+  }
+
+  const rows = Array.from(paymentCatalog.querySelectorAll('.catalog-row[data-option="Monthly Payment"]'));
   if (!rows.length) {
     return '';
   }
@@ -63,22 +111,14 @@ function buildInvoiceEmailCatalogMarkup() {
       const option = String(row.dataset.option || '');
       const dataLabel = String(row.dataset.displayLabel || '').trim();
       const strongLabel = String(row.querySelector('.receipt-catalog-copy strong')?.textContent || '').trim();
-      const displayLabel = dataLabel || strongLabel || option;
-      const defaultAmount = String(row.dataset.default || '0');
-      const disabled = row.dataset.disabled === '1';
-      return '<div class="catalog-row invoice-email-catalog-row' + (disabled ? ' is-disabled' : '') + '"'
-        + ' data-option="' + escapeHtml(option) + '"'
-        + ' data-display-label="' + escapeHtml(displayLabel) + '"'
-        + ' data-default="' + escapeHtml(defaultAmount) + '"'
-        + ' data-disabled="' + (disabled ? '1' : '0') + '">'
-        + '<button type="button" class="catalog-add-btn" aria-label="Add ' + escapeHtml(option) + '"' + (disabled ? ' disabled' : '') + '>'
-        + '<i class="fa-solid ' + (disabled ? 'fa-check' : 'fa-plus') + '"></i>'
-        + '</button>'
-        + '<div class="receipt-catalog-copy">'
-        + '<strong>' + escapeHtml(displayLabel) + '</strong>'
-        + '<span>' + escapeHtml(defaultAmount) + '</span>'
-        + '</div>'
-        + '</div>';
+      return renderInvoiceEmailCatalogRowMarkup(
+        option,
+        dataLabel || strongLabel || option,
+        row.dataset.default || '0',
+        row.dataset.base || row.dataset.default || '0',
+        row.dataset.discountPercent || '0',
+        row.dataset.disabled === '1'
+      );
     }).join('')
     + '</div>';
 }
@@ -167,7 +207,7 @@ function formatPreviewDate(value) {
   }
 
   return parsedDate.toLocaleDateString('en-GB', {
-    day: 'numeric',
+    day: '2-digit',
     month: 'short',
     year: 'numeric'
   });
@@ -244,43 +284,87 @@ if (typeof window.matchMedia === 'function') {
 }
 
 if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
-  const fullTuition = parseAmount(selectedPaymentTable.dataset.fullTuition || '0');
-  const remainingBeforePayment = parseAmount(selectedPaymentTable.dataset.remaining || String(fullTuition));
+  let fullTuition = parseAmount(selectedPaymentTable.dataset.fullTuition || '0');
+  let displayPlanTotal = parseAmount(selectedPaymentTable.dataset.fullTuition || '0');
+  const paidTotalBeforePayment = parseAmount(selectedPaymentTable.dataset.paidTotal || '0');
+  let remainingBeforePayment = parseAmount(selectedPaymentTable.dataset.remaining || String(fullTuition));
+  let displayRemainingBeforePayment = parseAmount(selectedPaymentTable.dataset.standardRemaining || String(displayPlanTotal));
+  const paymentPlanLocked = selectedPaymentTable.dataset.planLocked === '1';
+  let activePaymentPlanKey = String(selectedPaymentTable.dataset.activePlanKey || paymentPlanInput?.value || 'annual').trim() || 'annual';
+  let paymentPlanCatalogs = {};
+  try {
+    paymentPlanCatalogs = JSON.parse(selectedPaymentTable.dataset.planCatalogs || paymentCatalog.dataset.planCatalogs || '{}') || {};
+  } catch (error) {
+    paymentPlanCatalogs = {};
+  }
+  const discountPlanOptions = new Set(paymentPlanButtons.map((button) => String(button.dataset.planOption || '').trim()).filter(Boolean));
   const previewEmailItemsState = [];
+  let previewLoadedFromHistory = false;
   const getRows = () => Array.from(selectedPaymentTable.querySelectorAll('.selected-payment-row[data-option]'));
   const getCatalogRows = () => Array.from(paymentCatalog.querySelectorAll('.catalog-row[data-option]'));
   const getCatalogRowByOption = (option) => getCatalogRows().find((row) => row.dataset.option === option) || null;
+  const isDiscountPlanOption = (option) => discountPlanOptions.has(String(option || '').trim());
   const getBuilderTotal = () => getRows().reduce((sum, row) => sum + Math.max(getRowAmount(row), 0), 0);
+  const getBuilderCreditTotal = () => getRows().reduce((sum, row) => sum + Math.max(getRowCreditAmount(row), 0), 0);
   const hasPreviewEmailItems = () => previewEmailItemsState.length > 0;
   const getPreviewEmailItemsTotal = () => previewEmailItemsState.reduce((sum, item) => sum + Math.max(parseAmount(item.amount), 0), 0);
+  const getActivePlanConfig = (planKey = activePaymentPlanKey) => {
+    const normalizedKey = String(planKey || '').trim();
+    return paymentPlanCatalogs[normalizedKey]
+      || paymentPlanCatalogs.annual
+      || Object.values(paymentPlanCatalogs)[0]
+      || null;
+  };
+  const getActivePlanDiscountPercent = (option = '') => {
+    const activePlanConfig = getActivePlanConfig();
+    if (!activePlanConfig) {
+      return 0;
+    }
+
+    const normalizedOption = String(option || '').trim();
+    const coreOption = String(activePlanConfig.core_option || '').trim();
+    if (!normalizedOption || normalizedOption !== coreOption) {
+      return 0;
+    }
+
+    return Math.max(parseAmount(activePlanConfig.discount_percent || '0'), 0);
+  };
+  const syncPlanSummary = () => {
+    const activePlanConfig = getActivePlanConfig();
+    if (selectedPlanTotalDisplay) {
+      selectedPlanTotalDisplay.textContent = formatPHP(displayPlanTotal);
+    }
+    if (activePaymentPlanDisplay) {
+      activePaymentPlanDisplay.textContent = String(activePlanConfig?.label || selectedPaymentTable.dataset.activePlanLabel || 'Annual Payment');
+    }
+  };
   const getPreviewPayloadItems = () => {
-    if (hasPreviewEmailItems()) {
-      return previewEmailItemsState.map((item) => ({
+    return previewEmailItemsState.map((item) => {
+      const payloadItem = {
         option: item.option || '',
         label: item.label || item.displayLabel || item.option || 'Payment Item',
         amount: Number(parseAmount(item.amount).toFixed(2))
-      }));
-    }
+      };
 
-    return getRows().map((row) => ({
-      option: row.dataset.option || '',
-      label: row.dataset.displayLabel || row.dataset.option || 'Payment Item',
-      amount: Number(getRowAmount(row).toFixed(2))
-    })).filter((item) => item.option && item.amount > 0);
+      const baseAmount = parseAmount(item.baseAmount || item.base_amount || item.amount);
+      const discountPercent = parseAmount(item.discountPercent || item.discount_percent || '0');
+      if (baseAmount > parseAmount(item.amount) + 0.005) {
+        payloadItem.base_amount = Number(baseAmount.toFixed(2));
+      }
+      if (discountPercent > 0) {
+        payloadItem.discount_percent = Number(discountPercent.toFixed(2));
+      }
+
+      return payloadItem;
+    });
   };
   const getPreviewEmailDisplayItems = () => {
-    if (hasPreviewEmailItems()) {
-      return previewEmailItemsState.map((item) => ({
-        option: item.option || '',
-        label: item.label || item.displayLabel || item.option || 'Payment Item',
-        amount: parseAmount(item.amount)
-      }));
-    }
-
-    return getRows().map((row) => ({
-      option: row.dataset.option || '',
-      label: row.dataset.displayLabel || row.dataset.option || 'Payment Item',
-      amount: getRowAmount(row)
+    return previewEmailItemsState.map((item) => ({
+      option: item.option || '',
+      label: item.label || item.displayLabel || item.option || 'Payment Item',
+      amount: parseAmount(item.amount),
+      base_amount: parseAmount(item.baseAmount || item.base_amount || item.amount),
+      discount_percent: parseAmount(item.discountPercent || item.discount_percent || '0')
     }));
   };
   const syncPreviewEmailItemsInput = () => {
@@ -302,19 +386,34 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
       trigger.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
     }
   };
-  const syncEmailPreview = (total) => {
+  const syncPaymentDateInputs = (source = 'builder') => {
+    if (source === 'preview') {
+      if (paymentDateInput && invoiceEmailDueDateInput) {
+        paymentDateInput.value = invoiceEmailDueDateInput.value || '';
+      }
+      return invoiceEmailDueDateInput?.value || paymentDateInput?.value || '';
+    }
+
+    if (paymentDateInput && invoiceEmailDueDateInput) {
+      invoiceEmailDueDateInput.value = paymentDateInput.value || '';
+    }
+
+    return paymentDateInput?.value || invoiceEmailDueDateInput?.value || '';
+  };
+
+  const syncEmailPreview = (total, dateSource = 'builder') => {
     const displayItems = getPreviewEmailDisplayItems();
-    const dueDateText = formatPreviewDate(paymentDateInput?.value || '');
+    const dueDateText = formatPreviewDate(syncPaymentDateInputs(dateSource));
     const invoiceNumberText = String(receiptNumberInput?.value || 'N/A').trim() || 'N/A';
-    const previewTotal = hasPreviewEmailItems() ? getPreviewEmailItemsTotal() : total;
+    const previewTotal = hasPreviewEmailItems() ? getPreviewEmailItemsTotal() : 0;
     const isCustomPreview = hasPreviewEmailItems();
     const formattedTotal = formatPHP(previewTotal);
 
     if (invoiceEmailTotal) {
       invoiceEmailTotal.textContent = formatInvoiceNumber(previewTotal);
     }
-    if (invoiceEmailDueDate) {
-      invoiceEmailDueDate.textContent = 'Due ' + dueDateText;
+    if (invoiceEmailMetaDueDate) {
+      invoiceEmailMetaDueDate.textContent = 'Due ' + dueDateText;
     }
     if (invoiceEmailNumber) {
       invoiceEmailNumber.textContent = invoiceNumberText;
@@ -349,6 +448,52 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
 
     syncPreviewEmailItemsInput();
   };
+  const renderCatalogRowMarkup = (item) => {
+    const option = String(item.option || '').trim();
+    const displayLabel = String(item.display_label || item.displayLabel || option).trim() || option;
+    const defaultAmount = formatInvoiceNumber(parseAmount(item.default_amount || item.defaultAmount || '0'));
+    const baseAmount = formatInvoiceNumber(parseAmount(item.base_amount || item.baseAmount || item.default_amount || item.defaultAmount || '0'));
+    const discountPercent = Number(parseAmount(item.discount_percent || item.discountPercent || '0')).toFixed(2);
+    const disabled = item.disabled === true || item.disabled === 1 || item.disabled === '1';
+
+    return '<div class="catalog-row receipt-catalog-row' + (disabled ? ' is-disabled' : '') + '"'
+      + ' data-option="' + escapeHtml(option) + '"'
+      + ' data-display-label="' + escapeHtml(displayLabel) + '"'
+      + ' data-default="' + escapeHtml(defaultAmount) + '"'
+      + ' data-base="' + escapeHtml(baseAmount) + '"'
+      + ' data-discount-percent="' + escapeHtml(discountPercent) + '"'
+      + ' data-disabled="' + (disabled ? '1' : '0') + '">'
+      + '<button type="button" class="catalog-add-btn" aria-label="Add ' + escapeHtml(option) + '"' + (disabled ? ' disabled' : '') + '>'
+      + '<i class="fa-solid ' + (disabled ? 'fa-check' : 'fa-plus') + '"></i>'
+      + '</button>'
+      + '<div class="receipt-catalog-copy">'
+      + '<strong>' + escapeHtml(displayLabel) + '</strong>'
+      + '<span>' + escapeHtml(defaultAmount) + '</span>'
+      + '</div>'
+      + '</div>';
+  };
+  const renderCatalogRows = (catalogItems) => {
+    paymentCatalog.innerHTML = Array.isArray(catalogItems)
+      ? catalogItems.map((item) => renderCatalogRowMarkup(item)).join('')
+      : '';
+    const hasEnabledCatalogItem = Array.isArray(catalogItems)
+      && catalogItems.some((item) => !(item.disabled === true || item.disabled === 1 || item.disabled === '1'));
+    if (receiptAddTrigger) {
+      receiptAddTrigger.disabled = !hasEnabledCatalogItem;
+    }
+    bindCatalogRows(paymentCatalog);
+  };
+  const syncPlanButtons = () => {
+    paymentPlanButtons.forEach((button) => {
+      const buttonPlanKey = String(button.dataset.planOption || '').trim();
+      const isActive = buttonPlanKey === activePaymentPlanKey;
+      button.classList.toggle('is-active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      if (paymentPlanLocked && !isActive) {
+        button.disabled = true;
+      }
+    });
+  };
   const setCatalogOpen = (isOpen) => {
     paymentCatalog.classList.toggle('is-open', isOpen);
     if (receiptAddTrigger) {
@@ -359,30 +504,87 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     }
   };
 
+  const formatDiscountAmount = (value) => formatInvoiceNumber(Math.max(parseAmount(value), 0));
+
   const getRowAmount = (row) => {
     return parseAmount(row.dataset.amount || '0');
   };
+  const getRowBaseAmount = (row) => {
+    return parseAmount(row.dataset.baseAmount || row.dataset.amount || '0');
+  };
+  const getRowBaseFactor = (row) => {
+    const storedFactor = parseAmount(row.dataset.baseFactor || '0');
+    return storedFactor > 0 ? storedFactor : 1;
+  };
+  const getRowDiscountPercent = (row) => {
+    return parseAmount(row.dataset.discountPercent || '0');
+  };
+  const getRowDiscountAmount = (row) => {
+    return Math.max(getRowBaseAmount(row) - getRowAmount(row), 0);
+  };
+  const getRowCreditAmount = (row) => {
+    return getRowAmount(row);
+  };
+  const getTuitionUnitPriceInputValue = (row) => {
+    return getRowBaseAmount(row);
+  };
+  const getRowAmountFromUnitPrice = (row, unitPrice) => {
+    const baseFactor = getRowBaseFactor(row);
+    if (baseFactor <= 1) {
+      return Math.max(parseAmount(unitPrice), 0);
+    }
+
+    return Math.max(parseAmount(unitPrice) / baseFactor, 0);
+  };
+  const hasDiscountPlanRow = () => getRows().some((row) => isDiscountPlanOption(row.dataset.option || ''));
 
   const getUnitPriceDisplay = (row) => row.querySelector('.selected-unit-price-display');
   const getTuitionManualWrap = (row) => row.querySelector('.tuition-manual-wrap');
   const getTuitionManualInput = (row) => row.querySelector('.tuition-manual-input');
+  const getDiscountCell = (row) => row.querySelector('.selected-row-discount');
 
-  const setRowAmount = (row, amount, options = {}) => {
-    const { skipInputSync = false } = options;
+  const setRowPricing = (row, amount, options = {}) => {
+    const {
+      baseAmount = amount,
+      discountPercent = 0,
+      skipInputSync = false
+    } = options;
     const normalizedAmount = Math.max(parseAmount(amount), 0);
+    const normalizedBaseAmount = Math.max(parseAmount(baseAmount), normalizedAmount);
+    const normalizedDiscountPercent = Math.max(parseAmount(discountPercent), 0);
+    const normalizedBaseFactor = normalizedAmount > 0
+      ? (normalizedBaseAmount / normalizedAmount)
+      : getRowBaseFactor(row);
     row.dataset.amount = normalizedAmount.toFixed(2);
+    row.dataset.baseAmount = normalizedBaseAmount.toFixed(2);
+    row.dataset.baseFactor = normalizedBaseFactor.toFixed(6);
+    row.dataset.discountPercent = normalizedDiscountPercent.toFixed(2);
     const suggested = getUnitPriceDisplay(row);
+    const discountCell = getDiscountCell(row);
     const lineAmount = row.querySelector('.selected-row-amount');
     const manualInput = getTuitionManualInput(row);
     if (suggested) {
-      suggested.textContent = formatInvoiceNumber(normalizedAmount);
+      suggested.textContent = formatInvoiceNumber(normalizedBaseAmount);
+    }
+    if (discountCell) {
+      discountCell.textContent = formatDiscountAmount(normalizedBaseAmount - normalizedAmount);
     }
     if (lineAmount) {
       lineAmount.textContent = formatInvoiceNumber(normalizedAmount);
     }
     if (manualInput && !skipInputSync && document.activeElement !== manualInput) {
-      manualInput.value = formatInvoiceNumber(normalizedAmount);
+      manualInput.value = formatInvoiceNumber(getTuitionUnitPriceInputValue(row));
     }
+  };
+
+  const setRowAmount = (row, amount, options = {}) => {
+    const existingDiscountPercent = getRowDiscountPercent(row);
+    const existingBaseFactor = getRowBaseFactor(row);
+    setRowPricing(row, amount, {
+      ...options,
+      baseAmount: options.baseAmount ?? (Math.max(parseAmount(amount), 0) * existingBaseFactor),
+      discountPercent: options.discountPercent ?? existingDiscountPercent
+    });
   };
 
   const setRowStatus = (row, message) => {
@@ -413,7 +615,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
 
     manualWrap.classList.remove('is-hidden');
     display.classList.add('is-hidden');
-    manualInput.value = formatInvoiceNumber(getRowAmount(row));
+    manualInput.value = formatInvoiceNumber(getTuitionUnitPriceInputValue(row));
 
     manualInput.addEventListener('focus', () => {
       manualInput.select();
@@ -421,16 +623,27 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
 
     manualInput.addEventListener('input', () => {
       const maxAllowed = getMaxTuitionAllowed(row);
-      const typedAmount = parseAmount(manualInput.value);
-      const normalizedAmount = Math.min(Math.max(typedAmount, 0), maxAllowed);
-      setRowAmount(row, normalizedAmount, { skipInputSync: true });
+      const baseFactor = getRowBaseFactor(row);
+      const typedUnitPrice = parseAmount(manualInput.value);
+      const normalizedUnitPrice = Math.min(Math.max(typedUnitPrice, 0), maxAllowed * baseFactor);
+      const normalizedAmount = getRowAmountFromUnitPrice(row, normalizedUnitPrice);
+      setRowPricing(row, normalizedAmount, {
+        baseAmount: normalizedUnitPrice,
+        discountPercent: getRowDiscountPercent(row),
+        skipInputSync: true
+      });
       syncTotals();
     });
 
     manualInput.addEventListener('blur', () => {
       const maxAllowed = getMaxTuitionAllowed(row);
-      const normalizedAmount = Math.min(Math.max(getRowAmount(row), 0), maxAllowed);
-      setRowAmount(row, normalizedAmount);
+      const baseFactor = getRowBaseFactor(row);
+      const normalizedUnitPrice = Math.min(Math.max(getTuitionUnitPriceInputValue(row), 0), maxAllowed * baseFactor);
+      const normalizedAmount = getRowAmountFromUnitPrice(row, normalizedUnitPrice);
+      setRowPricing(row, normalizedAmount, {
+        baseAmount: normalizedUnitPrice,
+        discountPercent: getRowDiscountPercent(row)
+      });
     });
   };
 
@@ -455,18 +668,16 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
       setRowStatus(
         row,
         maxAllowed > 0
-          ? 'Enter any amount up to the remaining balance'
+          ? (getRowBaseFactor(row) > 1.000001
+            ? 'Discount is applied automatically as you edit the unit price'
+            : 'Enter any amount up to the remaining balance')
           : 'No remaining balance left'
       );
     });
 
-    let total = 0;
-    getRows().forEach((row) => {
-      const amount = getRowAmount(row);
-      total += Math.max(amount, 0);
-    });
-
-    const remaining = Math.max(remainingBeforePayment - total, 0);
+    const total = getBuilderTotal();
+    const creditedTotal = getBuilderCreditTotal();
+    const remaining = Math.max(remainingBeforePayment - creditedTotal, 0);
     if (paymentPreview) {
       paymentPreview.textContent = formatInvoiceNumber(total);
     }
@@ -489,7 +700,56 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
   const clearBuilderRows = () => {
     getRows().forEach((row) => row.remove());
     previewEmailItemsState.splice(0, previewEmailItemsState.length);
+    previewLoadedFromHistory = false;
+    setActiveHistoryRow(null);
     syncEmptyState();
+  };
+
+  const setActivePaymentPlan = (nextPlanKey, options = {}) => {
+    const {
+      clearRows = true,
+      showMessage = false
+    } = options;
+    const nextConfig = getActivePlanConfig(nextPlanKey);
+    if (!nextConfig) {
+      return;
+    }
+
+    const normalizedNextKey = String(nextConfig.key || nextPlanKey || '').trim() || activePaymentPlanKey;
+    if (paymentPlanLocked && normalizedNextKey !== activePaymentPlanKey) {
+      showToast('This student already has saved payments under a locked payment plan.');
+      return;
+    }
+
+    const shouldClearRows = clearRows && (getRows().length > 0 || hasPreviewEmailItems());
+    if (shouldClearRows) {
+      clearBuilderRows();
+      if (showMessage) {
+        showToast('Payment rows were cleared to switch rates.');
+      }
+    }
+
+    activePaymentPlanKey = normalizedNextKey;
+    fullTuition = parseAmount(nextConfig.program_total || '0');
+    displayPlanTotal = parseAmount(nextConfig.program_total || fullTuition);
+    remainingBeforePayment = Math.max(parseAmount(nextConfig.remaining_balance || (fullTuition - paidTotalBeforePayment)), 0);
+    displayRemainingBeforePayment = Math.max(parseAmount(nextConfig.standard_remaining_balance || (displayPlanTotal - paidTotalBeforePayment)), 0);
+    selectedPaymentTable.dataset.activePlanKey = activePaymentPlanKey;
+    selectedPaymentTable.dataset.activePlanLabel = String(nextConfig.label || '');
+    selectedPaymentTable.dataset.fullTuition = fullTuition.toFixed(2);
+    selectedPaymentTable.dataset.standardTotal = displayPlanTotal.toFixed(2);
+    selectedPaymentTable.dataset.remaining = remainingBeforePayment.toFixed(2);
+    selectedPaymentTable.dataset.standardRemaining = displayRemainingBeforePayment.toFixed(2);
+
+    if (paymentPlanInput) {
+      paymentPlanInput.value = activePaymentPlanKey;
+    }
+
+    renderCatalogRows(nextConfig.catalog || []);
+    syncPlanButtons();
+    syncPlanSummary();
+    syncEmptyState();
+    syncTotals();
   };
 
   const setActiveHistoryRow = (activeRow) => {
@@ -509,10 +769,29 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     return catalogLabel || option;
   };
 
-  const addSelectedRow = (option, defaultAmount, displayLabel) => {
+  const addSelectedRow = (option, defaultAmount, displayLabel, config = {}) => {
+    const {
+      baseAmount = defaultAmount,
+      discountPercent = getActivePlanDiscountPercent(option),
+      replaceExisting = false,
+      statusMessage = '',
+      isDiscountPlan = isDiscountPlanOption(option)
+    } = config;
     const existingRow = getRows().find((row) => row.dataset.option === option);
     if (existingRow) {
       return existingRow;
+    }
+
+    if (isDiscountPlan) {
+      if (getRows().length > 0 && replaceExisting) {
+        clearBuilderRows();
+      } else if (getRows().length > 0) {
+        showToast('Clear the current invoice rows first before using a discount payment plan.');
+        return null;
+      }
+    } else if (hasDiscountPlanRow()) {
+      showToast('Clear the selected discount payment plan before adding other billing items.');
+      return null;
     }
 
     const hasTuitionFee = getRows().some((row) => row.dataset.option === 'Tuition Fee');
@@ -532,19 +811,37 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     row.dataset.displayLabel = effectiveLabel;
     row.dataset.label = effectiveLabel;
     name.textContent = effectiveLabel;
-    if (option === 'Tuition Fee') {
+    if (isDiscountPlan) {
+      setRowAmount(row, defaultAmount, {
+        baseAmount,
+        discountPercent
+      });
+      setRowStatus(row, statusMessage || `${formatDiscountAmount(baseAmount - defaultAmount)} discount applied automatically`);
+    } else if (option === 'Tuition Fee') {
       const maxAllowed = getMaxTuitionAllowed(row);
       if (maxAllowed <= 0) {
         showToast('No remaining balance available for Tuition Fee.');
         return null;
       }
 
-      setRowAmount(row, Math.min(defaultAmount, maxAllowed));
-      setRowStatus(row, 'Enter any amount up to the remaining balance');
+      const initialAmount = Math.min(defaultAmount, maxAllowed);
+      const baseFactor = defaultAmount > 0 ? (baseAmount / defaultAmount) : 1;
+      setRowAmount(row, initialAmount, {
+        baseAmount: initialAmount * baseFactor,
+        discountPercent
+      });
+      setRowStatus(row, Math.max(baseAmount - defaultAmount, 0) > 0
+        ? 'Discount is applied automatically as you edit the unit price'
+        : 'Enter any amount up to the remaining balance');
       enableTuitionManualInput(row);
     } else {
-      setRowAmount(row, defaultAmount);
-      setRowStatus(row, 'Fixed brochure amount');
+      setRowAmount(row, defaultAmount, { baseAmount, discountPercent });
+      setRowStatus(
+        row,
+        Math.max(baseAmount - defaultAmount, 0) > 0
+          ? `${formatDiscountAmount(baseAmount - defaultAmount)} discount applied automatically`
+          : 'Fixed brochure amount'
+      );
     }
 
     removeBtn.addEventListener('click', () => {
@@ -567,7 +864,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     return row;
   };
 
-  const loadHistoryIntoBuilder = (payload, activeRow) => {
+  const loadHistoryIntoEmailPreview = (payload, activeRow) => {
     if (!payload || typeof payload !== 'object') {
       return;
     }
@@ -584,11 +881,15 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
         amount: fallbackAmount
       }] : []);
 
-    clearBuilderRows();
+    previewEmailItemsState.splice(0, previewEmailItemsState.length);
+    previewLoadedFromHistory = true;
 
     const paymentDate = String(payload.payment_date || '').trim();
     if (paymentDateInput && paymentDate) {
       paymentDateInput.value = paymentDate;
+    }
+    if (invoiceEmailDueDateInput && paymentDate) {
+      invoiceEmailDueDateInput.value = paymentDate;
     }
 
     const receiptNo = String(payload.receipt_no || '').trim();
@@ -604,28 +905,37 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
       }
 
       const displayLabel = getHistoryItemLabel(item, option);
-      const row = addSelectedRow(option, amount, displayLabel);
-      if (!row) {
-        return;
+      const previewItem = {
+        option,
+        label: displayLabel,
+        displayLabel,
+        amount: amount.toFixed(2)
+      };
+
+      const baseAmount = Math.max(parseAmount(item.base_amount), 0);
+      const discountPercent = Math.max(parseAmount(item.discount_percent), 0);
+      if (discountPercent > 0 && baseAmount > 0) {
+        previewItem.baseAmount = baseAmount.toFixed(2);
+        previewItem.discountPercent = discountPercent.toFixed(2);
       }
 
-      setRowAmount(row, amount);
-      setRowStatus(
-        row,
-        option === 'Tuition Fee'
-          ? 'Enter any amount up to the remaining balance'
-          : 'Loaded from history'
-      );
+      previewEmailItemsState.push(previewItem);
     });
 
-    syncTotals();
-    syncEmptyState();
+    syncEmailPreview(getBuilderTotal(), 'preview');
     setActiveHistoryRow(activeRow);
-    paymentForm?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    showToast('Invoice details loaded into the form.');
+    document.getElementById('receipt-email-preview')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    showToast('Sent email preview loaded.');
   };
 
-  const addPreviewEmailItem = (option, defaultAmount, displayLabel) => {
+  const addPreviewEmailItem = (option, defaultAmount, displayLabel, config = {}) => {
+    const {
+      baseAmount = defaultAmount,
+      discountPercent = 0
+    } = config;
+    previewLoadedFromHistory = false;
+    setActiveHistoryRow(null);
+
     const existingPreviewItem = previewEmailItemsState.find((item) => item.option === option);
     if (existingPreviewItem) {
       showToast('This payment item is already added in the top preview.');
@@ -640,8 +950,12 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     }
 
     let amount = Math.max(defaultAmount, 0);
+    let resolvedBaseAmount = Math.max(baseAmount, amount);
     if (option === 'Tuition Fee') {
       amount = Math.min(amount, remainingBeforePayment);
+      if (defaultAmount > 0 && baseAmount > 0 && amount < defaultAmount) {
+        resolvedBaseAmount = Number((amount * (baseAmount / defaultAmount)).toFixed(2));
+      }
     }
 
     if (amount <= 0) {
@@ -649,18 +963,29 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
       return;
     }
 
-    previewEmailItemsState.push({
+    const previewItem = {
       option,
       label: displayLabel || option,
       displayLabel: displayLabel || option,
       amount: amount.toFixed(2)
-    });
+    };
+    if (resolvedBaseAmount > amount + 0.005) {
+      previewItem.baseAmount = resolvedBaseAmount.toFixed(2);
+    }
+    if (discountPercent > 0 && resolvedBaseAmount > 0) {
+      previewItem.discountPercent = Number(discountPercent).toFixed(2);
+    }
+
+    previewEmailItemsState.push(previewItem);
 
     setInvoiceEmailCatalogOpen(false);
     syncEmailPreview(getBuilderTotal());
   };
 
   const removePreviewEmailItem = (option) => {
+    previewLoadedFromHistory = false;
+    setActiveHistoryRow(null);
+
     const targetOption = String(option || '').trim();
     if (!targetOption) {
       return;
@@ -696,10 +1021,12 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
         const option = catalogRow.dataset.option || '';
         const displayLabel = catalogRow.dataset.displayLabel || option;
         const defaultAmount = parseAmount(catalogRow.dataset.default || '0');
+        const baseAmount = parseAmount(catalogRow.dataset.base || catalogRow.dataset.default || '0');
+        const discountPercent = parseAmount(catalogRow.dataset.discountPercent || '0');
         if (!option) {
           return;
         }
-        addSelectedRow(option, defaultAmount, displayLabel);
+        addSelectedRow(option, defaultAmount, displayLabel, { baseAmount, discountPercent });
       };
 
       button?.addEventListener('click', (event) => {
@@ -713,6 +1040,29 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
 
   bindCatalogRows(paymentCatalog);
 
+  paymentPlanButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      if (button.disabled) {
+        return;
+      }
+
+      const nextPlanKey = String(button.dataset.planOption || '').trim();
+      if (!nextPlanKey) {
+        showToast('This payment plan is not available right now.');
+        return;
+      }
+
+      setCatalogOpen(false);
+      setInvoiceEmailCatalogOpen(false);
+      setActivePaymentPlan(nextPlanKey, {
+        clearRows: true,
+        showMessage: true
+      });
+    });
+  });
+
+  setActivePaymentPlan(activePaymentPlanKey, { clearRows: false });
+
   gmailHistoryRows().forEach((historyRow) => {
     historyRow.addEventListener('click', (event) => {
       const target = event.target instanceof Element ? event.target : null;
@@ -725,6 +1075,13 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
       }
 
       const link = target.closest('a.history-link');
+      const previewTargetLink = link || historyRow.querySelector('a.history-link');
+      const previewHref = String(previewTargetLink?.getAttribute('href') || '');
+      const isPreviewEmailHistory = previewHref.includes('#receipt-email-preview');
+      if (!isPreviewEmailHistory) {
+        return;
+      }
+
       if (link && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) {
         return;
       }
@@ -746,11 +1103,11 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
       }
 
       if (!payload) {
-        showToast('This history row could not be loaded.');
+        showToast('This sent email preview could not be loaded.');
         return;
       }
 
-      loadHistoryIntoBuilder(payload, historyRow);
+      loadHistoryIntoEmailPreview(payload, historyRow);
     });
   });
 
@@ -810,12 +1167,14 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     const option = catalogRow.dataset.option || '';
     const displayLabel = catalogRow.dataset.displayLabel || option;
     const defaultAmount = parseAmount(catalogRow.dataset.default || '0');
+    const baseAmount = parseAmount(catalogRow.dataset.base || catalogRow.dataset.default || '0');
+    const discountPercent = parseAmount(catalogRow.dataset.discountPercent || '0');
     if (!option) {
       return;
     }
 
     event.preventDefault();
-    addPreviewEmailItem(option, defaultAmount, displayLabel);
+    addPreviewEmailItem(option, defaultAmount, displayLabel, { baseAmount, discountPercent });
   });
 
   invoiceEmailItems?.addEventListener('keydown', (event) => {
@@ -866,10 +1225,24 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     const builderRows = getRows().map((row) => {
       const option = row.dataset.option || '';
       const amount = parseAmount(row.dataset.amount || '0');
-      return {
+      const payloadRow = {
         option,
         amount
       };
+
+      const baseAmount = getRowBaseAmount(row);
+      const discountPercent = getRowDiscountPercent(row);
+      if (baseAmount > amount + 0.005) {
+        payloadRow.base_amount = Number(baseAmount.toFixed(2));
+      }
+      if (discountPercent > 0) {
+        payloadRow.discount_percent = Number(discountPercent.toFixed(2));
+      }
+      if (baseAmount > amount + 0.005 || discountPercent > 0) {
+        payloadRow.label = row.dataset.label || row.dataset.displayLabel || option;
+      }
+
+      return payloadRow;
     }).filter((row) => row.option && row.amount > 0);
     const previewRows = getPreviewPayloadItems();
     const submitMode = paymentSubmitModeInput?.value === 'preview_send' ? 'preview_send' : 'save';
@@ -897,8 +1270,20 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
       return;
     }
 
-    const totalAmount = activeRows.reduce((sum, row) => sum + parseAmount(row.amount), 0);
-    if (totalAmount > remainingBeforePayment) {
+    const selectedDiscountPlanRows = activeRows.filter((row) => isDiscountPlanOption(row.option || ''));
+    if (selectedDiscountPlanRows.length > 1 || (selectedDiscountPlanRows.length === 1 && activeRows.length > 1)) {
+      event.preventDefault();
+      if (paymentSubmitModeInput) {
+        paymentSubmitModeInput.value = 'save';
+      }
+      showToast('Discount payment plans must be used on their own.');
+      return;
+    }
+
+    const totalCreditedAmount = activeRows.reduce((sum, row) => {
+      return sum + parseAmount(row.amount);
+    }, 0);
+    if (totalCreditedAmount > remainingBeforePayment) {
       event.preventDefault();
       if (paymentSubmitModeInput) {
         paymentSubmitModeInput.value = 'save';
@@ -914,10 +1299,20 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
   });
 
   paymentDateInput?.addEventListener('input', () => {
-    syncEmailPreview(getBuilderTotal());
+    previewLoadedFromHistory = false;
+    setActiveHistoryRow(null);
+    syncEmailPreview(getBuilderTotal(), 'builder');
+  });
+
+  invoiceEmailDueDateInput?.addEventListener('input', () => {
+    previewLoadedFromHistory = false;
+    setActiveHistoryRow(null);
+    syncEmailPreview(getBuilderTotal(), 'preview');
   });
 
   receiptNumberInput?.addEventListener('input', () => {
+    previewLoadedFromHistory = false;
+    setActiveHistoryRow(null);
     syncEmailPreview(getBuilderTotal());
   });
 

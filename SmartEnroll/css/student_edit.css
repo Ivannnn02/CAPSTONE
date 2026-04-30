@@ -34,4 +34,43 @@
     color: #b91c1c;
 }
 
-@media (max-width: 900px) {     .student-edit-grid {         grid-template-columns: 1fr;     } }
+.school-year-builder {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.school-year-config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.school-year-config-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.school-year-config-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #475467;
+}
+
+.school-year-help {
+    display: block;
+    color: #667085;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+    .student-edit-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .school-year-config-grid {
+        grid-template-columns: 1fr;
+    }
+}
