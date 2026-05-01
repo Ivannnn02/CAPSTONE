@@ -186,27 +186,58 @@ function smartenroll_build_payment_plan_config(string $gradeValue, ?mysqli $conn
 
 function smartenroll_infer_payment_plan_from_history(array $historyRows, string $fallbackPlanKey = 'annual'): string
 {
-    foreach ($historyRows as $row) {
+    $orderedRows = $historyRows;
+    usort($orderedRows, static function (array $left, array $right): int {
+        $dateCompare = strcmp((string)($left['payment_date'] ?? ''), (string)($right['payment_date'] ?? ''));
+        if ($dateCompare !== 0) {
+            return $dateCompare;
+        }
+
+        return ((int)($left['id'] ?? 0)) <=> ((int)($right['id'] ?? 0));
+    });
+
+    foreach ($orderedRows as $row) {
         $storedPlanKey = trim((string)($row['payment_plan'] ?? ''));
         if ($storedPlanKey !== '') {
             return smartenroll_normalize_payment_plan_key($storedPlanKey);
         }
     }
 
-    foreach ($historyRows as $row) {
+    foreach ($orderedRows as $row) {
         $items = is_array($row['items'] ?? null)
             ? $row['items']
             : decode_saved_payment_items((string)($row['payment_items'] ?? ''), (float)($row['amount_paid'] ?? 0));
-
-        foreach ($items as $item) {
-            $option = trim((string)($item['option'] ?? $item['label'] ?? ''));
-            if ($option === 'Monthly Payment') {
-                return 'monthly';
-            }
+        $inferredPlanKey = smartenroll_infer_payment_plan_key_from_items($items, '');
+        if ($inferredPlanKey !== 'annual') {
+            return $inferredPlanKey;
         }
     }
 
     return smartenroll_normalize_payment_plan_key($fallbackPlanKey);
+}
+
+function smartenroll_payment_history_row_plan_key(array $row, string $fallbackPlanKey = 'annual'): string
+{
+    $storedPlanKey = trim((string)($row['payment_plan'] ?? ''));
+    if ($storedPlanKey !== '') {
+        return smartenroll_normalize_payment_plan_key($storedPlanKey);
+    }
+
+    $items = is_array($row['items'] ?? null)
+        ? $row['items']
+        : decode_saved_payment_items((string)($row['payment_items'] ?? ''), (float)($row['amount_paid'] ?? 0));
+
+    return smartenroll_infer_payment_plan_key_from_items($items, $fallbackPlanKey);
+}
+
+function smartenroll_filter_payment_history_by_plan(array $historyRows, string $planKey): array
+{
+    $normalizedPlanKey = smartenroll_normalize_payment_plan_key($planKey);
+
+    return array_values(array_filter(
+        $historyRows,
+        static fn(array $row): bool => smartenroll_payment_history_row_plan_key($row, 'annual') === $normalizedPlanKey
+    ));
 }
 
 function smartenroll_resolve_payment_plan_total_from_history(array $historyRows, float $fallbackTotal = 0.0): float
@@ -525,14 +556,14 @@ function get_student(mysqli $conn, string $studentId): ?array
     return $student;
 }
 
-function get_school_year_paid_total(mysqli $conn, int $enrollmentId, string $studentId, string $schoolYear, string $gradeLevel): float
+function get_school_year_paid_total(mysqli $conn, int $enrollmentId, string $studentId, string $schoolYear, string $gradeLevel, ?string $paymentPlanKey = null): float
 {
     if ($enrollmentId <= 0 && $studentId === '') {
         return 0.0;
     }
 
     $stmt = $conn->prepare(
-        "SELECT payment_items, amount_paid
+        "SELECT payment_plan, payment_items, amount_paid
          FROM tuition_payments
          WHERE (enrollment_id = ? OR student_id = ?)
            AND COALESCE(school_year, '') = ?"
@@ -544,7 +575,12 @@ function get_school_year_paid_total(mysqli $conn, int $enrollmentId, string $stu
     $stmt->close();
 
     $totalPaid = 0.0;
+    $normalizedPlanKey = $paymentPlanKey !== null ? smartenroll_normalize_payment_plan_key($paymentPlanKey) : null;
     while ($row = $result->fetch_assoc()) {
+        if ($normalizedPlanKey !== null && smartenroll_payment_history_row_plan_key($row, 'annual') !== $normalizedPlanKey) {
+            continue;
+        }
+
         $totalPaid += smartenroll_payment_items_credit_total_from_json(
             (string)($row['payment_items'] ?? ''),
             (float)($row['amount_paid'] ?? 0)
@@ -559,7 +595,7 @@ function backfill_tuition_balances(mysqli $conn): int
     return smartenroll_sync_tuition_payment_totals($conn);
 }
 
-function get_paid_amounts_by_option(mysqli $conn, int $enrollmentId, string $studentId, string $schoolYear, string $gradeLevel): array
+function get_paid_amounts_by_option(mysqli $conn, int $enrollmentId, string $studentId, string $schoolYear, string $gradeLevel, ?string $paymentPlanKey = null): array
 {
     $totals = [];
     if ($enrollmentId <= 0 && $studentId === '') {
@@ -567,7 +603,7 @@ function get_paid_amounts_by_option(mysqli $conn, int $enrollmentId, string $stu
     }
 
     $stmt = $conn->prepare(
-        "SELECT payment_items, amount_paid
+        "SELECT payment_plan, payment_items, amount_paid
          FROM tuition_payments
          WHERE (enrollment_id = ? OR student_id = ?)
            AND COALESCE(school_year, '') = ?
@@ -577,7 +613,12 @@ function get_paid_amounts_by_option(mysqli $conn, int $enrollmentId, string $stu
     $stmt->execute();
     $result = $stmt->get_result();
 
+    $normalizedPlanKey = $paymentPlanKey !== null ? smartenroll_normalize_payment_plan_key($paymentPlanKey) : null;
     while ($row = $result->fetch_assoc()) {
+        if ($normalizedPlanKey !== null && smartenroll_payment_history_row_plan_key($row, 'annual') !== $normalizedPlanKey) {
+            continue;
+        }
+
         $items = decode_saved_payment_items((string)($row['payment_items'] ?? ''), (float)($row['amount_paid'] ?? 0));
         foreach ($items as $item) {
             $option = trim((string)($item['option'] ?? $item['label'] ?? ''));
@@ -652,10 +693,13 @@ function get_payment_plan_state(mysqli $conn, int $enrollmentId, string $student
         ];
     }
 
+    $lockedPlanKey = smartenroll_infer_payment_plan_from_history($historyRows);
+    $lockedHistoryRows = smartenroll_filter_payment_history_by_plan($historyRows, $lockedPlanKey);
+
     return [
         'has_payments' => true,
-        'plan_key' => smartenroll_infer_payment_plan_from_history($historyRows),
-        'program_total' => smartenroll_resolve_payment_plan_total_from_history($historyRows),
+        'plan_key' => $lockedPlanKey,
+        'program_total' => smartenroll_resolve_payment_plan_total_from_history($lockedHistoryRows),
     ];
 }
 
@@ -972,11 +1016,12 @@ function extract_payment_item_options(string $rawJson): array
 
 function infer_payment_plan_key_from_items(array $options, string $fallbackPlanKey = 'annual'): string
 {
-    if (in_array('Monthly Payment', $options, true)) {
-        return 'monthly';
-    }
+    $items = array_map(
+        static fn(string $option): array => ['option' => $option],
+        array_values(array_filter($options, static fn($option): bool => is_string($option) && trim($option) !== ''))
+    );
 
-    return smartenroll_normalize_payment_plan_key($fallbackPlanKey);
+    return smartenroll_infer_payment_plan_key_from_items($items, $fallbackPlanKey);
 }
 
 function get_payment_total(array $items): float
@@ -1389,7 +1434,7 @@ function send_receipt_email(array $student, array $payment, string $layout = 'su
                                 <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
                                     <tr>
                                         <td align="center" bgcolor="#3b82f6" style="background-color:#3b82f6;">
-                                            <a href="' . htmlspecialchars($viewLink) . '" style="display:block;padding:16px 24px;font-size:16px;line-height:1.3;font-weight:700;color:#ffffff;text-decoration:none;">View Invoice</a>
+                                            <span style="display:block;padding:16px 24px;font-size:16px;line-height:1.3;font-weight:700;color:#ffffff;text-decoration:none;">View Invoice</span>
                                         </td>
                                     </tr>
                                 </table>
@@ -1401,7 +1446,7 @@ function send_receipt_email(array $student, array $payment, string $layout = 'su
                                     <p style="margin:0 0 14px;">Hi, ' . htmlspecialchars($studentName) . '</p>
                                     <p style="margin:0 0 14px;">Here&apos;s invoice <strong style="color:#22374f;">' . htmlspecialchars($receiptNo) . '</strong> for <strong style="color:#22374f;">' . htmlspecialchars(format_money($invoiceAmount)) . '</strong>.</p>
                                     <p style="margin:0 0 14px;">The amount outstanding of <strong style="color:#22374f;">' . htmlspecialchars(format_money($invoiceAmount)) . '</strong> is due on <strong style="color:#22374f;">' . htmlspecialchars($dueDateDisplay) . '</strong>.</p>
-                                    <p style="margin:0 0 14px;">From your online bill you can print a PDF, export a CSV, or create a free login and view your outstanding bills.</p>
+                                    <p style="margin:0 0 14px;">From your online bill you can print a PDF or export a CSV.</p>
                                     <p style="margin:0 0 14px;">If you have any questions, please let us know.</p>
                                     <p style="margin:0;">Thanks,<br>Adreo Montessori Inc.</p>
                                 </div>
@@ -1576,7 +1621,6 @@ function send_receipt_email(array $student, array $payment, string $layout = 'su
         'Invoice #: ' . $receiptNo,
         'Due Date: ' . $dueDateDisplay,
         'Invoice Amount: ' . format_money($invoiceAmount),
-        'View Invoice: ' . $viewLink,
         '',
         'Hi, ' . $studentName,
         'Here\'s invoice ' . $receiptNo . ' for ' . format_money($invoiceAmount) . '.',
@@ -1600,7 +1644,6 @@ function send_receipt_email(array $student, array $payment, string $layout = 'su
         'Due Date: ' . $dueDateDisplay,
         'Invoice Amount: ' . format_money($invoiceAmount),
         'Amount Due: ' . format_money($remainingBalance),
-        'View Invoice: ' . $viewLink,
         '',
         'Student ID: ' . ($student['student_id'] ?? ''),
         'Student Name: ' . $studentName,
@@ -1748,7 +1791,7 @@ try {
                 $selectedSchoolYear,
                 $gradeLevel
             );
-            if ($submitMode !== 'preview_send' && !empty($paymentPlanState['has_payments'])) {
+            if (!empty($paymentPlanState['has_payments'])) {
                 $lockedPlanKey = smartenroll_normalize_payment_plan_key((string)($paymentPlanState['plan_key'] ?? 'annual'));
                 if ($requestedPaymentPlanKey !== $lockedPlanKey) {
                     throw new RuntimeException('This student already has saved payments under the ' . ($paymentPlanConfig[$lockedPlanKey]['label'] ?? 'selected') . ' plan.');
@@ -1766,7 +1809,7 @@ try {
             $paymentPlanKey = (string)($activePaymentPlan['key'] ?? $requestedPaymentPlanKey);
             $paymentPlanLabel = (string)($activePaymentPlan['label'] ?? ucfirst($paymentPlanKey));
             $tuitionFee = round((float)($activePaymentPlan['program_total'] ?? 0), 2);
-            if ($submitMode !== 'preview_send' && !empty($paymentPlanState['has_payments'])) {
+            if (!empty($paymentPlanState['has_payments'])) {
                 $storedProgramTotal = round((float)($paymentPlanState['program_total'] ?? 0), 2);
                 if ($storedProgramTotal > 0) {
                     $tuitionFee = $storedProgramTotal;
@@ -1778,7 +1821,8 @@ try {
                 (int)$selectedStudent['id'],
                 trim((string)($selectedStudent['student_id'] ?? '')),
                 $selectedSchoolYear,
-                $gradeLevel
+                $gradeLevel,
+                $paymentPlanKey
             );
             $paymentConfig = is_array($activePaymentPlan['items'] ?? null) ? $activePaymentPlan['items'] : [];
             if ($paymentConfig === []) {
@@ -1811,7 +1855,8 @@ try {
                 (int)$selectedStudent['id'],
                 trim((string)($selectedStudent['student_id'] ?? '')),
                 $selectedSchoolYear,
-                $gradeLevel
+                $gradeLevel,
+                $paymentPlanKey
             );
             $remainingBefore = max(0, round($tuitionFee - $alreadyPaid, 2));
 
@@ -2110,8 +2155,6 @@ try {
 
 $selectedGradeLevel = $selectedStudent['grade_level'] ?? '';
 $savedReceiptCount = count($paymentHistory);
-$totalPaid = sum_payment_history($paymentHistory);
-$paidByOption = get_paid_amounts_from_history($paymentHistory);
 $studentName = $selectedStudent ? format_name($selectedStudent) : '';
 $studentEmail = trim((string)($selectedStudent['email'] ?? ''));
 $paymentPlanConfig = $selectedStudent
@@ -2124,6 +2167,11 @@ $paymentPlanLocked = $paymentHistory !== [];
 if ($paymentPlanLocked) {
     $activePaymentPlanKey = smartenroll_infer_payment_plan_from_history($paymentHistory, $activePaymentPlanKey);
 }
+$activePaymentHistory = $paymentPlanLocked
+    ? smartenroll_filter_payment_history_by_plan($paymentHistory, $activePaymentPlanKey)
+    : $paymentHistory;
+$totalPaid = sum_payment_history($activePaymentHistory);
+$paidByOption = get_paid_amounts_from_history($activePaymentHistory);
 
 $activePaymentPlan = $paymentPlanConfig[$activePaymentPlanKey]
     ?? ($paymentPlanConfig !== [] ? reset($paymentPlanConfig) : []);
@@ -2135,8 +2183,8 @@ if ($selectedStudent && $selectedTuitionFee <= 0) {
 if ($selectedStudent && $selectedStandardTuitionFee <= 0) {
     $selectedStandardTuitionFee = round((float)(smartenroll_resolve_grade_tuition_fee($selectedGradeLevel, isset($conn) && $conn instanceof mysqli ? $conn : null) ?? 0.0), 2);
 }
-if ($paymentHistory !== []) {
-    $selectedTuitionFee = smartenroll_resolve_payment_plan_total_from_history($paymentHistory, $selectedTuitionFee);
+if ($activePaymentHistory !== []) {
+    $selectedTuitionFee = smartenroll_resolve_payment_plan_total_from_history($activePaymentHistory, $selectedTuitionFee);
     if (isset($paymentPlanConfig[$activePaymentPlanKey])) {
         $paymentPlanConfig[$activePaymentPlanKey]['program_total'] = $selectedTuitionFee;
     }
@@ -2149,15 +2197,22 @@ $paymentCatalog = [];
 foreach ($paymentPlanConfig as $planKey => $planConfig) {
     $planTotal = round((float)($planConfig['program_total'] ?? 0), 2);
     $planStandardTotal = round((float)($planConfig['standard_total'] ?? $planTotal), 2);
+    $planHistory = $paymentHistory !== []
+        ? smartenroll_filter_payment_history_by_plan($paymentHistory, (string)$planKey)
+        : [];
+    $planPaidTotal = sum_payment_history($planHistory);
+    $planPaidByOption = get_paid_amounts_from_history($planHistory);
     if ($planKey === $activePaymentPlanKey && $selectedTuitionFee > 0) {
         $planTotal = $selectedTuitionFee;
         $planConfig['program_total'] = $selectedTuitionFee;
+        $planPaidTotal = $totalPaid;
+        $planPaidByOption = $paidByOption;
     }
 
-    $planRemainingBalance = max(0, round($planTotal - $totalPaid, 2));
-    $planStandardRemainingBalance = max(0, round($planStandardTotal - $totalPaid, 2));
+    $planRemainingBalance = max(0, round($planTotal - $planPaidTotal, 2));
+    $planStandardRemainingBalance = max(0, round($planStandardTotal - $planPaidTotal, 2));
     $catalogRows = $selectedStudent
-        ? smartenroll_build_payment_catalog($selectedStudent, $planConfig, $planRemainingBalance, $paidByOption)
+        ? smartenroll_build_payment_catalog($selectedStudent, $planConfig, $planRemainingBalance, $planPaidByOption)
         : [];
 
     $paymentCatalogByPlan[$planKey] = [
@@ -2179,16 +2234,9 @@ foreach ($paymentPlanConfig as $planKey => $planConfig) {
 }
 
 $activePaymentPlanLabel = (string)($paymentCatalogByPlan[$activePaymentPlanKey]['label'] ?? 'Annual Payment');
-$invoiceEmailCatalog = [];
-if (isset($paymentCatalogByPlan['monthly']['catalog']) && is_array($paymentCatalogByPlan['monthly']['catalog'])) {
-    foreach ($paymentCatalogByPlan['monthly']['catalog'] as $catalogItem) {
-        if (trim((string)($catalogItem['option'] ?? '')) !== 'Monthly Payment') {
-            continue;
-        }
-
-        $invoiceEmailCatalog[] = $catalogItem;
-    }
-}
+$invoiceEmailCatalog = is_array($paymentCatalogByPlan[$activePaymentPlanKey]['catalog'] ?? null)
+    ? $paymentCatalogByPlan[$activePaymentPlanKey]['catalog']
+    : [];
 $hasEnabledPaymentOption = false;
 foreach ($paymentCatalog as $catalogItem) {
     if (empty($catalogItem['disabled'])) {
@@ -2321,10 +2369,7 @@ if (isset($conn) && $conn instanceof mysqli) {
             </div>
         </div>
 
-        <?php
-            $previewInvoiceLink = build_app_url('tuition_receipt_details.php', ['student_id' => (string)$selectedStudent['student_id']]) . '#receipt-email-preview';
-            ob_start();
-        ?>
+        <?php ob_start(); ?>
         <section class="card-block invoice-email-preview-panel" id="receipt-email-preview">
             <div class="invoice-email-preview-actions">
                 <button type="button" class="secondary-btn btn-sm" id="invoiceEmailPrintTrigger" title="Print Invoice">
@@ -2359,13 +2404,13 @@ if (isset($conn) && $conn instanceof mysqli) {
                     </label>
                 </div>
 
-                <a class="invoice-email-cta" id="invoiceEmailCta" href="<?php echo htmlspecialchars($previewInvoiceLink); ?>">View Invoice</a>
+                <span class="invoice-email-cta" id="invoiceEmailCta">View Invoice</span>
 
                 <div class="invoice-email-message">
                     <p>Hi, <?php echo htmlspecialchars($studentName); ?></p>
                     <p>Here&apos;s invoice <strong id="invoiceEmailBodyNumber"><?php echo htmlspecialchars($suggestedInvoiceNumber); ?></strong> for <strong id="invoiceEmailBodyAmount">PHP 0.00</strong>.</p>
                     <p>The amount outstanding of <strong id="invoiceEmailBodyOutstanding">PHP 0.00</strong> is due on <strong id="invoiceEmailBodyDueDate"><?php echo htmlspecialchars(format_invoice_date(date('Y-m-d'))); ?></strong>.</p>
-                    <p>From your online bill you can print a PDF, export a CSV, or create a free login and view your outstanding bills.</p>
+                    <p>From your online bill you can print a PDF or export a CSV.</p>
                     <p>If you have any questions, please let us know.</p>
                     <p>Thanks,<br>Adreo Montessori Inc.</p>
                 </div>

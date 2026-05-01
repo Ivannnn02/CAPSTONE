@@ -52,6 +52,33 @@ function smartenroll_normalize_payment_plan_key(string $planKey): string
     };
 }
 
+function smartenroll_infer_payment_plan_key_from_items(array $items, string $fallbackPlanKey = 'annual'): string
+{
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $option = trim((string)($item['option'] ?? $item['label'] ?? ''));
+        $normalizedOptionText = strtolower($option);
+        $normalizedOption = smartenroll_normalize_payment_plan_key($option);
+        if (in_array($normalizedOptionText, [
+            'annual payment',
+            'annual payment plan',
+            'semestral payment',
+            'semestral payment plan',
+            'semester',
+            'semester payment',
+            'monthly payment',
+            'monthly payment plan',
+        ], true)) {
+            return $normalizedOption;
+        }
+    }
+
+    return smartenroll_normalize_payment_plan_key($fallbackPlanKey);
+}
+
 function smartenroll_grade_payment_plan_templates(): array
 {
     return [
@@ -1500,9 +1527,13 @@ function smartenroll_sync_tuition_payment_totals(?mysqli $conn = null): int
             $storedPaymentPlan = trim((string)($row['payment_plan'] ?? ''));
             $currentGradeLevel = trim((string)($row['current_grade_level'] ?? ''));
             $resolvedGradeLevel = $storedGradeLevel !== '' ? $storedGradeLevel : $currentGradeLevel;
+            $paymentItems = json_decode((string)($row['payment_items'] ?? ''), true);
+            if (!is_array($paymentItems)) {
+                $paymentItems = [];
+            }
             $paymentPlanKey = $storedPaymentPlan !== ''
                 ? smartenroll_normalize_payment_plan_key($storedPaymentPlan)
-                : 'annual';
+                : smartenroll_infer_payment_plan_key_from_items($paymentItems, 'annual');
             $groupKey = ($enrollmentId > 0 ? 'enrollment:' . $enrollmentId : 'student:' . $studentId)
                 . '|'
                 . $schoolYear
@@ -1516,7 +1547,7 @@ function smartenroll_sync_tuition_payment_totals(?mysqli $conn = null): int
             }
 
             $storedTuitionFee = round((float)($row['tuition_fee'] ?? 0), 2);
-            if ($storedPaymentPlan !== '') {
+            if ($storedPaymentPlan !== '' || $paymentPlanKey !== 'annual') {
                 $resolvedPlanTotal = smartenroll_resolve_grade_payment_plan_total($resolvedGradeLevel, $paymentPlanKey, $db, $lookup);
                 $tuitionFee = $storedTuitionFee > 0 ? $storedTuitionFee : round((float)($resolvedPlanTotal ?? 0), 2);
             } else {

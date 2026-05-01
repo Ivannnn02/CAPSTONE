@@ -78,19 +78,23 @@ function buildInvoiceEmailCatalogMarkup() {
       + '</div>';
   };
 
-  let monthlyCatalogItems = [];
+  let previewCatalogItems = [];
   try {
     const planCatalogs = JSON.parse(paymentCatalog.dataset.planCatalogs || '{}') || {};
-    monthlyCatalogItems = Array.isArray(planCatalogs.monthly?.catalog)
-      ? planCatalogs.monthly.catalog.filter((item) => String(item.option || '').trim() === 'Monthly Payment')
+    const activePlanKey = String(selectedPaymentTable?.dataset.activePlanKey || paymentPlanInput?.value || '').trim();
+    previewCatalogItems = Array.isArray(planCatalogs[activePlanKey]?.catalog)
+      ? planCatalogs[activePlanKey].catalog
       : [];
+    if (!previewCatalogItems.length && Array.isArray(planCatalogs.monthly?.catalog)) {
+      previewCatalogItems = planCatalogs.monthly.catalog;
+    }
   } catch (error) {
-    monthlyCatalogItems = [];
+    previewCatalogItems = [];
   }
 
-  if (monthlyCatalogItems.length) {
+  if (previewCatalogItems.length) {
     return '<div class="payment-catalog-card invoice-email-catalog-menu" id="invoiceEmailCatalog">'
-      + monthlyCatalogItems.map((item) => renderInvoiceEmailCatalogRowMarkup(
+      + previewCatalogItems.map((item) => renderInvoiceEmailCatalogRowMarkup(
         item.option || '',
         item.display_label || item.displayLabel || item.option || '',
         item.default_amount || item.defaultAmount || '0',
@@ -101,7 +105,7 @@ function buildInvoiceEmailCatalogMarkup() {
       + '</div>';
   }
 
-  const rows = Array.from(paymentCatalog.querySelectorAll('.catalog-row[data-option="Monthly Payment"]'));
+  const rows = Array.from(paymentCatalog.querySelectorAll('.catalog-row[data-option]'));
   if (!rows.length) {
     return '';
   }

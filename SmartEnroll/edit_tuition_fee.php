@@ -320,7 +320,7 @@ try {
                                         <small><?php echo htmlspecialchars($paymentCountLabel); ?></small>
                                     </span>
                                     <span class="grade-plan-total" data-plan-total>
-                                        Total: <?php echo htmlspecialchars('PHP ' . number_format((float)($plan['program_total'] ?? 0), 2)); ?>
+                                        Total: <?php echo htmlspecialchars('PHP ' . number_format((float)($plan['standard_total'] ?? $plan['program_total'] ?? 0), 2)); ?>
                                     </span>
                                     <span class="grade-plan-discount-note" data-plan-discount>
                                         <?php echo htmlspecialchars($planDiscountLabel); ?>
@@ -560,7 +560,7 @@ try {
                 activePlan = plan;
             }
             if (total) {
-                total.textContent = 'Total: ' + formatPHP(plan.program_total);
+                total.textContent = 'Total: ' + formatPHP(plan.standard_total);
             }
             if (discount) {
                 discount.textContent = plan.discount_amount > 0
