@@ -109,8 +109,8 @@ function smartenroll_save_grade_breakdown_components(array $breakdownData, ?mysq
             $stmt->execute();
             $stmt->close();
 
-            // Also update the total tuition fee in the grade level table
-            $totalFee = array_sum($components);
+            $annualComponents = is_array($components['annual'] ?? null) ? $components['annual'] : $components;
+            $totalFee = array_sum(array_map(static fn($amount): float => (float)$amount, $annualComponents));
             $updateStmt = $conn->prepare("
                 UPDATE `enrollment_grade_levels` 
                 SET tuition_fee = ? 
@@ -141,11 +141,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? '') === '
                 continue;
             }
 
-            $gradeComponents = [];
+            if (!is_array($gradeComponentData)) {
+                continue;
+            }
 
-            if (is_array($gradeComponentData) && isset($gradeComponentData['name'], $gradeComponentData['amount'])) {
-                $componentNames = $gradeComponentData['name'];
-                $componentAmounts = $gradeComponentData['amount'];
+            $gradePlanComponents = [];
+            foreach (array_keys(smartenroll_payment_plan_defaults()) as $planKey) {
+                $planComponentData = $gradeComponentData[$planKey] ?? [];
+                if (!is_array($planComponentData) || !isset($planComponentData['name'], $planComponentData['amount'])) {
+                    continue;
+                }
+
+                $planComponents = [];
+                $componentNames = is_array($planComponentData['name']) ? $planComponentData['name'] : [];
+                $componentAmounts = is_array($planComponentData['amount']) ? $planComponentData['amount'] : [];
 
                 foreach ($componentNames as $componentIndex => $rawComponentName) {
                     $componentName = trim((string)$rawComponentName);
@@ -154,32 +163,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? '') === '
                     }
 
                     $amount = smartenroll_parse_fee_value($componentAmounts[$componentIndex] ?? '');
-                    $gradeComponents[$componentName] = $amount;
-                }
-            } elseif (is_array($gradeComponentData)) {
-                foreach ($gradeComponentData as $componentName => $componentValues) {
-                    if (!is_array($componentValues)) {
+                    if ($amount <= 0) {
                         continue;
                     }
 
-                    $componentName = trim((string)$componentName);
-                    if ($componentName === '') {
-                        continue;
-                    }
+                    $planComponents[$componentName] = $amount;
+                }
 
-                    foreach ($componentValues as $value) {
-                        $amount = smartenroll_parse_fee_value($value);
-                        $gradeComponents[$componentName] = $amount;
-                    }
+                if (in_array($gradeKey, ['Toddler', 'Casa', 'Kindergarten'], true)) {
+                    unset($planComponents['Books']);
+                }
+
+                if ($planComponents !== []) {
+                    $gradePlanComponents[$planKey] = $planComponents;
                 }
             }
 
-            if (in_array($gradeKey, ['Toddler', 'Casa', 'Kindergarten'], true)) {
-                unset($gradeComponents['Books']);
-            }
-
-            if (!empty($gradeComponents)) {
-                $breakdownData[$gradeKey] = $gradeComponents;
+            if ($gradePlanComponents !== []) {
+                $breakdownData[$gradeKey] = $gradePlanComponents;
             }
         }
 
@@ -199,20 +200,23 @@ if (($_GET['status'] ?? '') === 'saved') {
 $gradeLevels = [];
 $gradeBreakdowns = [];
 $gradePaymentPlans = [];
+$paymentPlanSettingsByGrade = [];
 
 try {
     $gradeLevels = smartenroll_get_grade_levels();
-    $templates = smartenroll_grade_breakdown_templates();
+    $gradePlanBreakdownMap = smartenroll_get_grade_plan_breakdown_map();
+    $paymentPlanSettingsByGrade = smartenroll_get_payment_plan_settings();
 
     foreach ($gradeLevels as $grade) {
         $gradeKey = (string)$grade['grade_key'];
-        $gradeBreakdowns[$gradeKey] = $templates[$gradeKey] ?? ['Tuition Fee' => (float)$grade['tuition_fee']];
+        $gradeBreakdowns[$gradeKey] = $gradePlanBreakdownMap[$gradeKey] ?? [];
         $gradePaymentPlans[$gradeKey] = smartenroll_resolve_grade_payment_plans($gradeKey);
     }
 } catch (Throwable $e) {
     $gradeLevels = [];
     $gradeBreakdowns = [];
     $gradePaymentPlans = [];
+    $paymentPlanSettingsByGrade = [];
     if ($errorMessage === '') {
         $errorMessage = $e->getMessage();
     }
@@ -267,8 +271,14 @@ try {
                 <?php $gradeLabel = (string)$gradeRow['grade_label']; ?>
                 <?php $breakdown = $gradeBreakdowns[$gradeKey] ?? []; ?>
                 <?php $planSummary = $gradePaymentPlans[$gradeKey] ?? []; ?>
+                <?php $gradePlanDiscounts = smartenroll_normalize_payment_plan_discount_map($paymentPlanSettingsByGrade[$gradeKey] ?? []); ?>
+                <?php $gradePlanDiscountsJson = htmlspecialchars((string)json_encode($gradePlanDiscounts, JSON_UNESCAPED_SLASHES), ENT_QUOTES, 'UTF-8'); ?>
 
-                <div class="settings-subsection">
+                <div
+                    class="settings-subsection"
+                    data-grade-key="<?php echo htmlspecialchars($gradeKey, ENT_QUOTES); ?>"
+                    data-plan-discounts="<?php echo $gradePlanDiscountsJson; ?>"
+                >
                     <h3 class="detail-section-title"><?php echo htmlspecialchars($gradeLabel); ?></h3>
                     
                     <input type="hidden" name="grade_key[]" value="<?php echo htmlspecialchars($gradeKey); ?>">
@@ -298,18 +308,24 @@ try {
                                             . ($planDiscountPercent > 0 ? ' (' . number_format($planDiscountPercent, 0) . '%)' : '')
                                         : 'No discount';
                                 ?>
-                                <div class="grade-plan-field">
+                                <div
+                                    class="grade-plan-field<?php echo $planKey === 'annual' ? ' is-open' : ''; ?>"
+                                    data-plan-key="<?php echo htmlspecialchars($planKey, ENT_QUOTES); ?>"
+                                    role="button"
+                                    tabindex="0"
+                                    aria-expanded="<?php echo $planKey === 'annual' ? 'true' : 'false'; ?>"
+                                >
                                     <span class="grade-plan-label-row">
                                         <strong><?php echo htmlspecialchars((string)($plan['label'] ?? ucfirst($planKey))); ?></strong>
                                         <small><?php echo htmlspecialchars($paymentCountLabel); ?></small>
                                     </span>
-                                    <span class="grade-plan-total">
+                                    <span class="grade-plan-total" data-plan-total>
                                         Total: <?php echo htmlspecialchars('PHP ' . number_format((float)($plan['program_total'] ?? 0), 2)); ?>
                                     </span>
-                                    <span class="grade-plan-discount-note">
+                                    <span class="grade-plan-discount-note" data-plan-discount>
                                         <?php echo htmlspecialchars($planDiscountLabel); ?>
                                     </span>
-                                    <div class="grade-plan-rate-list">
+                                    <div class="grade-plan-rate-list" data-plan-rate-list>
                                         <?php foreach ($planRules as $itemLabel => $rule): ?>
                                             <?php
                                                 $displayLabel = trim((string)$itemLabel);
@@ -322,73 +338,48 @@ try {
                                                     ? 'per month'
                                                     : ($repeatCount > 1 ? 'x ' . $repeatCount : '');
                                             ?>
-                                            <div class="grade-plan-rate-row">
-                                                <span><?php echo htmlspecialchars($displayLabel); ?></span>
-                                                <strong><?php echo htmlspecialchars(number_format($rateAmount, 2)); ?></strong>
+                                            <div class="grade-plan-rate-row grade-plan-component-row">
+                                                <input
+                                                    type="text"
+                                                    name="components[<?php echo htmlspecialchars($gradeKey, ENT_QUOTES); ?>][<?php echo htmlspecialchars($planKey, ENT_QUOTES); ?>][name][]"
+                                                    value="<?php echo htmlspecialchars((string)$itemLabel); ?>"
+                                                    class="fee-component-name-input"
+                                                    placeholder="Component name"
+                                                >
+                                                <input
+                                                    type="number"
+                                                    name="components[<?php echo htmlspecialchars($gradeKey, ENT_QUOTES); ?>][<?php echo htmlspecialchars($planKey, ENT_QUOTES); ?>][amount][]"
+                                                    value="<?php echo htmlspecialchars(number_format((float)($rule['base_amount'] ?? $rateAmount), 2, '.', '')); ?>"
+                                                    min="0"
+                                                    step="0.01"
+                                                    inputmode="decimal"
+                                                    class="fee-component-input"
+                                                    placeholder="0.00"
+                                                >
+                                                <button type="button" class="component-remove-btn" aria-label="Remove component">&times;</button>
                                                 <?php if ($rateNote !== ''): ?>
                                                     <small><?php echo htmlspecialchars($rateNote); ?></small>
                                                 <?php endif; ?>
                                             </div>
                                         <?php endforeach; ?>
+                                        <div class="grade-plan-add-row">
+                                            <button
+                                                type="button"
+                                                class="grade-add-btn grade-plan-add-btn"
+                                                data-grade-key="<?php echo htmlspecialchars($gradeKey, ENT_QUOTES); ?>"
+                                                data-plan-key="<?php echo htmlspecialchars($planKey, ENT_QUOTES); ?>"
+                                            >+ Add component</button>
+                                        </div>
                                     </div>
                                 </div>
                             <?php endforeach; ?>
                         </div>
                     </div>
 
-                    <div class="grade-breakdown-table-wrap">
-                        <table class="grade-breakdown-table" data-grade-key="<?php echo htmlspecialchars($gradeKey, ENT_QUOTES); ?>">
-                            <thead>
-                                <tr>
-                                    <th>Fee Component</th>
-                                    <th>Amount</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($breakdown as $componentName => $componentValue): ?>
-                                    <tr class="component-row">
-                                        <td>
-                                            <input
-                                                type="text"
-                                                name="components[<?php echo htmlspecialchars($gradeKey, ENT_QUOTES); ?>][name][]"
-                                                value="<?php echo htmlspecialchars($componentName); ?>"
-                                                class="fee-component-name-input"
-                                                placeholder="Component name"
-                                            >
-                                        </td>
-                                        <td>
-                                            <input
-                                                type="number"
-                                                name="components[<?php echo htmlspecialchars($gradeKey, ENT_QUOTES); ?>][amount][]"
-                                                value="<?php echo htmlspecialchars(number_format($componentValue, 2, '.', '')); ?>"
-                                                min="0"
-                                                step="0.01"
-                                                inputmode="decimal"
-                                                class="fee-component-input"
-                                                placeholder="0.00"
-                                            >
-                                        </td>
-                                        <td class="component-action-cell">
-                                            <button type="button" class="component-remove-btn" aria-label="Remove component">&times;</button>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                        <div class="grade-table-actions">
-                            <button type="button" class="grade-add-btn" data-grade-key="<?php echo htmlspecialchars($gradeKey, ENT_QUOTES); ?>">+ Add component</button>
-                        </div>
+                    <div class="grade-total-row">
+                        <strong>Selected Plan Original Total:</strong>
+                        <span class="total-amount">PHP 0.00</span>
                     </div>
-
-                    <?php if (!empty($breakdown)): ?>
-                        <div class="grade-total-row">
-                            <strong>Total:</strong>
-                            <span class="total-amount">
-                                ₱<?php echo number_format(array_sum($breakdown), 2); ?>
-                            </span>
-                        </div>
-                    <?php endif; ?>
                 </div>
             <?php endforeach; ?>
 
@@ -400,72 +391,245 @@ try {
     </div>
 </main>
 <script>
-    function updateGradeTotals(section) {
-        const amountInputs = section.querySelectorAll('input[name*="[amount][]"]');
-        let total = 0;
-        amountInputs.forEach((input) => {
-            const value = parseFloat(input.value);
-            if (!Number.isNaN(value)) {
-                total += value;
+    const PAYMENT_PLAN_DEFAULTS = <?php echo json_encode(smartenroll_payment_plan_defaults(), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
+    const RESTRICTED_BOOK_GRADES = new Set(['Toddler', 'Casa', 'Kindergarten']);
+
+    function parseMoneyValue(value) {
+        return parseFloat(String(value || '').replace(/,/g, '')) || 0;
+    }
+
+    function roundMoney(value) {
+        return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+    }
+
+    function formatNumber(value) {
+        return Number(value || 0).toLocaleString('en-PH', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    }
+
+    function formatPHP(value) {
+        return 'PHP ' + formatNumber(value);
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function collectPlanComponents(planField) {
+        const section = planField.closest('.settings-subsection');
+        const gradeKey = String(section?.dataset.gradeKey || '');
+        const componentMap = new Map();
+
+        planField.querySelectorAll('.grade-plan-component-row').forEach((row) => {
+            const label = String(row.querySelector('.fee-component-name-input')?.value || '').trim().replace(/\s+/g, ' ');
+            const amount = roundMoney(parseMoneyValue(row.querySelector('.fee-component-input')?.value || '0'));
+            if (!label || amount <= 0) {
+                return;
+            }
+            if (RESTRICTED_BOOK_GRADES.has(gradeKey) && label.toLowerCase() === 'books') {
+                return;
+            }
+
+            componentMap.set(label.toLowerCase(), { label, amount });
+        });
+
+        return Array.from(componentMap.values());
+    }
+
+    function resolveCoreComponent(components, coreOption) {
+        if (!components.length) {
+            return null;
+        }
+
+        const exactCore = components.find((component) => component.label.toLowerCase() === String(coreOption || '').toLowerCase());
+        if (exactCore) {
+            return exactCore;
+        }
+
+        if (coreOption === 'Monthly Payment') {
+            const tuitionFee = components.find((component) => component.label.toLowerCase() === 'tuition fee');
+            if (tuitionFee) {
+                return tuitionFee;
+            }
+        }
+
+        return components.reduce((largest, component) => {
+            return component.amount > largest.amount ? component : largest;
+        }, components[0]);
+    }
+
+    function buildPlanPreview(section, planField) {
+        const planKey = planField.dataset.planKey || '';
+        const planMeta = PAYMENT_PLAN_DEFAULTS?.[planKey] || {};
+        const installmentCount = Math.max(parseInt(planMeta.installment_count || 1, 10), 1);
+        const coreOption = String(planMeta.core_option || 'Tuition Fee');
+        const components = collectPlanComponents(planField);
+        const coreComponent = resolveCoreComponent(components, coreOption);
+        if (!coreComponent) {
+            return null;
+        }
+
+        let discounts = {};
+        try {
+            discounts = JSON.parse(section.dataset.planDiscounts || '{}') || {};
+        } catch (error) {
+            discounts = {};
+        }
+
+        const otherComponents = components.filter((component) => component !== coreComponent);
+        const discountPercent = Math.max(parseMoneyValue(discounts[planKey] ?? planMeta.discount_percent ?? 0), 0);
+        const coreBaseAmount = coreOption === 'Monthly Payment' && coreComponent.label !== 'Monthly Payment'
+            ? roundMoney(coreComponent.amount / installmentCount)
+            : coreComponent.amount;
+        const coreAmount = roundMoney(coreBaseAmount * Math.max(0, 1 - (discountPercent / 100)));
+        const itemRules = {};
+
+        if (coreBaseAmount > 0) {
+            itemRules[coreOption] = {
+                amount: coreAmount,
+                base_amount: coreBaseAmount,
+                repeat_count: 1,
+                discount_percent: discountPercent
+            };
+        }
+
+        otherComponents.forEach((component) => {
+            itemRules[component.label] = {
+                amount: component.amount,
+                base_amount: component.amount,
+                repeat_count: 1,
+                discount_percent: 0
+            };
+        });
+
+        let standardTotal = 0;
+        let programTotal = 0;
+        Object.entries(itemRules).forEach(([itemLabel, rule]) => {
+            const itemAmount = roundMoney(rule.amount || 0);
+            const baseAmount = roundMoney(rule.base_amount || itemAmount);
+            const repeatCount = Math.max(parseInt(rule.repeat_count || 1, 10), 1);
+
+            if (itemLabel === coreOption && coreOption === 'Monthly Payment') {
+                standardTotal += roundMoney(baseAmount * installmentCount);
+                programTotal += roundMoney(itemAmount * installmentCount);
+                return;
+            }
+
+            standardTotal += roundMoney(baseAmount * repeatCount);
+            programTotal += roundMoney(itemAmount * repeatCount);
+        });
+
+        return {
+            label: String(planMeta.label || planKey),
+            core_option: coreOption,
+            installment_count: installmentCount,
+            program_total: roundMoney(programTotal),
+            standard_total: roundMoney(standardTotal),
+            discount_amount: Math.max(roundMoney(standardTotal - programTotal), 0),
+            discount_percent: discountPercent,
+            item_rules: itemRules
+        };
+    }
+
+    function updateGradePlanPreview(section) {
+        let activePlan = null;
+
+        section.querySelectorAll('.grade-plan-field[data-plan-key]').forEach((field) => {
+            const plan = buildPlanPreview(section, field);
+            const total = field.querySelector('[data-plan-total]');
+            const discount = field.querySelector('[data-plan-discount]');
+
+            if (!plan) {
+                if (total) {
+                    total.textContent = 'Total: ' + formatPHP(0);
+                }
+                if (discount) {
+                    discount.textContent = 'No discount';
+                }
+                return;
+            }
+
+            if (field.classList.contains('is-open')) {
+                activePlan = plan;
+            }
+            if (total) {
+                total.textContent = 'Total: ' + formatPHP(plan.program_total);
+            }
+            if (discount) {
+                discount.textContent = plan.discount_amount > 0
+                    ? 'Discount: ' + formatPHP(plan.discount_amount)
+                        + (plan.discount_percent > 0 ? ' (' + formatNumber(plan.discount_percent).replace('.00', '') + '%)' : '')
+                    : 'No discount';
             }
         });
+
         const totalAmount = section.querySelector('.total-amount');
         if (totalAmount) {
-            totalAmount.textContent = '₱' + total.toFixed(2);
+            totalAmount.textContent = formatPHP(activePlan?.standard_total || 0);
         }
     }
 
-    function createComponentRow(gradeKey) {
-        const row = document.createElement('tr');
-        row.className = 'component-row';
+    function updateGradeTotals(section) {
+        updateGradePlanPreview(section);
+    }
 
-        const nameCell = document.createElement('td');
+    function createComponentRow(gradeKey, planKey) {
+        const row = document.createElement('div');
+        row.className = 'grade-plan-rate-row grade-plan-component-row';
+
         const nameInput = document.createElement('input');
         nameInput.type = 'text';
-        nameInput.name = `components[${gradeKey}][name][]`;
+        nameInput.name = `components[${gradeKey}][${planKey}][name][]`;
         nameInput.className = 'fee-component-name-input';
         nameInput.placeholder = 'Component name';
-        nameCell.appendChild(nameInput);
 
-        const amountCell = document.createElement('td');
         const amountInput = document.createElement('input');
         amountInput.type = 'number';
-        amountInput.name = `components[${gradeKey}][amount][]`;
+        amountInput.name = `components[${gradeKey}][${planKey}][amount][]`;
         amountInput.className = 'fee-component-input';
         amountInput.min = '0';
         amountInput.step = '0.01';
         amountInput.inputMode = 'decimal';
         amountInput.placeholder = '0.00';
-        amountCell.appendChild(amountInput);
 
-        const actionCell = document.createElement('td');
-        actionCell.className = 'component-action-cell';
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'component-remove-btn';
         removeBtn.setAttribute('aria-label', 'Remove component');
-        removeBtn.textContent = '×';
-        actionCell.appendChild(removeBtn);
+        removeBtn.textContent = 'x';
 
-        row.appendChild(nameCell);
-        row.appendChild(amountCell);
-        row.appendChild(actionCell);
+        row.appendChild(nameInput);
+        row.appendChild(amountInput);
+        row.appendChild(removeBtn);
 
         return row;
     }
 
     document.addEventListener('click', function (event) {
-        if (event.target.matches('.grade-add-btn')) {
+        if (event.target.matches('.grade-plan-add-btn')) {
+            event.preventDefault();
+            event.stopPropagation();
             const gradeKey = event.target.dataset.gradeKey;
+            const planKey = event.target.dataset.planKey;
             const subsection = event.target.closest('.settings-subsection');
-            const tbody = subsection.querySelector('tbody');
-            const newRow = createComponentRow(gradeKey);
-            tbody.appendChild(newRow);
+            const rateList = event.target.closest('[data-plan-rate-list]');
+            const addRow = event.target.closest('.grade-plan-add-row');
+            const newRow = createComponentRow(gradeKey, planKey);
+            rateList?.insertBefore(newRow, addRow || null);
             updateGradeTotals(subsection);
         }
 
         if (event.target.matches('.component-remove-btn')) {
-            const row = event.target.closest('tr');
+            event.preventDefault();
+            event.stopPropagation();
+            const row = event.target.closest('.grade-plan-component-row');
             if (row) {
                 const section = row.closest('.settings-subsection');
                 row.remove();
@@ -474,10 +638,43 @@ try {
                 }
             }
         }
+
+        const planField = event.target.closest('.grade-plan-field[data-plan-key]');
+        if (planField) {
+            const section = planField.closest('.settings-subsection');
+            const grid = planField.closest('.grade-plan-grid');
+            grid?.querySelectorAll('.grade-plan-field[data-plan-key]').forEach((field) => {
+                const isSelected = field === planField;
+                field.classList.toggle('is-open', isSelected);
+                field.setAttribute('aria-expanded', isSelected ? 'true' : 'false');
+            });
+            if (section) {
+                updateGradeTotals(section);
+            }
+        }
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter' && event.key !== ' ') {
+            return;
+        }
+
+        const eventTarget = event.target instanceof Element ? event.target : null;
+        if (eventTarget?.matches('input, button, textarea, select')) {
+            return;
+        }
+
+        const planField = eventTarget?.closest('.grade-plan-field[data-plan-key]');
+        if (!planField) {
+            return;
+        }
+
+        event.preventDefault();
+        planField.click();
     });
 
     document.addEventListener('input', function (event) {
-        if (event.target.matches('input[name*="[amount][]"]')) {
+        if (event.target.matches('input[name*="[amount][]"], input[name*="[name][]"]')) {
             const section = event.target.closest('.settings-subsection');
             if (section) {
                 updateGradeTotals(section);

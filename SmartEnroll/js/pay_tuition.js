@@ -285,7 +285,7 @@ if (typeof window.matchMedia === 'function') {
 
 if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
   let fullTuition = parseAmount(selectedPaymentTable.dataset.fullTuition || '0');
-  let displayPlanTotal = parseAmount(selectedPaymentTable.dataset.fullTuition || '0');
+  let displayPlanTotal = parseAmount(selectedPaymentTable.dataset.standardTotal || selectedPaymentTable.dataset.fullTuition || '0');
   const paidTotalBeforePayment = parseAmount(selectedPaymentTable.dataset.paidTotal || '0');
   let remainingBeforePayment = parseAmount(selectedPaymentTable.dataset.remaining || String(fullTuition));
   let displayRemainingBeforePayment = parseAmount(selectedPaymentTable.dataset.standardRemaining || String(displayPlanTotal));
@@ -731,7 +731,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
 
     activePaymentPlanKey = normalizedNextKey;
     fullTuition = parseAmount(nextConfig.program_total || '0');
-    displayPlanTotal = parseAmount(nextConfig.program_total || fullTuition);
+    displayPlanTotal = parseAmount(nextConfig.standard_total || nextConfig.program_total || fullTuition);
     remainingBeforePayment = Math.max(parseAmount(nextConfig.remaining_balance || (fullTuition - paidTotalBeforePayment)), 0);
     displayRemainingBeforePayment = Math.max(parseAmount(nextConfig.standard_remaining_balance || (displayPlanTotal - paidTotalBeforePayment)), 0);
     selectedPaymentTable.dataset.activePlanKey = activePaymentPlanKey;

@@ -2305,7 +2305,7 @@ if (isset($conn) && $conn instanceof mysqli) {
         <div class="summary-grid">
             <div class="summary-card">
                 <span>Selected Plan Total</span>
-                <strong id="selectedPlanTotalDisplay"><?php echo htmlspecialchars(format_money($selectedTuitionFee)); ?></strong>
+                <strong id="selectedPlanTotalDisplay"><?php echo htmlspecialchars(format_money($selectedStandardTuitionFee)); ?></strong>
             </div>
             <div class="summary-card">
                 <span>Payment Plan</span>
@@ -2521,7 +2521,7 @@ if (isset($conn) && $conn instanceof mysqli) {
                                     >
                                         <span class="payment-plan-name"><?php echo htmlspecialchars($planLabel); ?></span>
                                         <span class="payment-plan-discount"><?php echo htmlspecialchars($planDiscountText); ?></span>
-                                        <strong><?php echo htmlspecialchars(format_money($planAmount)); ?></strong>
+                                        <strong><?php echo htmlspecialchars(format_money($planOriginalAmount)); ?></strong>
                                     </button>
                                 <?php endforeach; ?>
                             </div>

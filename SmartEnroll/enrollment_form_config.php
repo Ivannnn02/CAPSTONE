@@ -761,17 +761,20 @@ function smartenroll_build_dynamic_grade_payment_plans(string $gradeKey, array $
         $installmentCount = max(1, (int)($planMeta['installment_count'] ?? 1));
         $coreOption = (string)($planMeta['core_option'] ?? 'Tuition Fee');
         $coreDiscountPercent = $resolvedDiscounts[$planKey] ?? 0.0;
-        $coreAmount = $coreOption === 'Monthly Payment'
+        $coreBaseAmount = $coreOption === 'Monthly Payment'
             ? round($coreSourceAmount / $installmentCount, 2)
             : $coreSourceAmount;
+        $coreDiscountFactor = max(0, 1 - ($coreDiscountPercent / 100));
+        $coreAmount = round($coreBaseAmount * $coreDiscountFactor, 2);
 
         $items = [];
         $itemRules = [];
 
-        if ($coreAmount > 0) {
+        if ($coreBaseAmount > 0) {
             $items[$coreOption] = $coreAmount;
             $itemRules[$coreOption] = [
                 'amount' => $coreAmount,
+                'base_amount' => $coreBaseAmount,
                 'repeat_count' => 1,
                 'discount_percent' => $coreDiscountPercent,
             ];
@@ -800,19 +803,17 @@ function smartenroll_build_dynamic_grade_payment_plans(string $gradeKey, array $
         $programTotal = 0.0;
         foreach ($itemRules as $itemLabel => $rule) {
             $itemAmount = round((float)($rule['amount'] ?? 0), 2);
+            $baseAmount = round((float)($rule['base_amount'] ?? $itemAmount), 2);
             $repeatCount = max(1, (int)($rule['repeat_count'] ?? 1));
-            $discountPercent = max(0, round((float)($rule['discount_percent'] ?? 0), 2));
-            $discountFactor = max(0, 1 - ($discountPercent / 100));
-            $discountedAmount = round($itemAmount * $discountFactor, 2);
 
             if ($itemLabel === $coreOption && $coreOption === 'Monthly Payment') {
-                $standardTotal += round($itemAmount * $installmentCount, 2);
-                $programTotal += round($discountedAmount * $installmentCount, 2);
+                $standardTotal += round($baseAmount * $installmentCount, 2);
+                $programTotal += round($itemAmount * $installmentCount, 2);
                 continue;
             }
 
-            $standardTotal += round($itemAmount * $repeatCount, 2);
-            $programTotal += round($discountedAmount * $repeatCount, 2);
+            $standardTotal += round($baseAmount * $repeatCount, 2);
+            $programTotal += round($itemAmount * $repeatCount, 2);
         }
 
         $standardTotal = round($standardTotal, 2);
@@ -838,15 +839,208 @@ function smartenroll_build_dynamic_grade_payment_plans(string $gradeKey, array $
     return $resolvedPlans;
 }
 
+function smartenroll_normalize_breakdown_components(array $components, string $gradeKey): array
+{
+    $normalized = [];
+    foreach (smartenroll_filter_grade_breakdown_components($components, $gradeKey) as $label => $amount) {
+        $resolvedLabel = trim((string)$label);
+        $resolvedAmount = round((float)$amount, 2);
+        if ($resolvedLabel === '' || $resolvedAmount <= 0) {
+            continue;
+        }
+
+        $normalized[$resolvedLabel] = $resolvedAmount;
+    }
+
+    return $normalized;
+}
+
+function smartenroll_normalize_plan_breakdown_components(array $components, string $gradeKey): array
+{
+    $planKeys = array_keys(smartenroll_payment_plan_defaults());
+    $hasPlanKeys = false;
+    foreach ($planKeys as $planKey) {
+        if (isset($components[$planKey]) && is_array($components[$planKey])) {
+            $hasPlanKeys = true;
+            break;
+        }
+    }
+
+    if (!$hasPlanKeys) {
+        $annualComponents = smartenroll_normalize_breakdown_components($components, $gradeKey);
+        return $annualComponents !== [] ? ['annual' => $annualComponents] : [];
+    }
+
+    $normalized = [];
+    foreach ($planKeys as $planKey) {
+        $planComponents = isset($components[$planKey]) && is_array($components[$planKey])
+            ? smartenroll_normalize_breakdown_components($components[$planKey], $gradeKey)
+            : [];
+        if ($planComponents !== []) {
+            $normalized[$planKey] = $planComponents;
+        }
+    }
+
+    return $normalized;
+}
+
+function smartenroll_get_saved_plan_breakdown_components(?string $gradeKey = null, ?mysqli $conn = null): array
+{
+    $savedComponents = smartenroll_get_saved_breakdown_components($gradeKey, $conn);
+
+    if ($gradeKey !== null) {
+        return smartenroll_normalize_plan_breakdown_components($savedComponents, $gradeKey);
+    }
+
+    $normalized = [];
+    foreach ($savedComponents as $savedGradeKey => $components) {
+        if (!is_array($components)) {
+            continue;
+        }
+
+        $planComponents = smartenroll_normalize_plan_breakdown_components($components, (string)$savedGradeKey);
+        if ($planComponents !== []) {
+            $normalized[(string)$savedGradeKey] = $planComponents;
+        }
+    }
+
+    return $normalized;
+}
+
+function smartenroll_build_payment_plan_from_components(string $planKey, array $planMeta, array $components, float $discountPercent): array
+{
+    $installmentCount = max(1, (int)($planMeta['installment_count'] ?? 1));
+    $coreOption = (string)($planMeta['core_option'] ?? 'Tuition Fee');
+    $coreLabel = array_key_exists($coreOption, $components) ? $coreOption : '';
+
+    if ($coreLabel === '' && $coreOption === 'Monthly Payment' && array_key_exists('Tuition Fee', $components)) {
+        $coreLabel = 'Tuition Fee';
+    }
+
+    if ($coreLabel === '') {
+        $coreComponent = smartenroll_resolve_core_breakdown_component($components);
+        $coreLabel = trim((string)($coreComponent['label'] ?? ''));
+    }
+
+    $coreSourceAmount = round((float)($components[$coreLabel] ?? 0), 2);
+    if ($coreSourceAmount <= 0) {
+        return [];
+    }
+
+    $coreBaseAmount = $coreOption === 'Monthly Payment' && $coreLabel !== 'Monthly Payment'
+        ? round($coreSourceAmount / $installmentCount, 2)
+        : $coreSourceAmount;
+    $discountPercent = max(0, round($discountPercent, 2));
+    $discountFactor = max(0, 1 - ($discountPercent / 100));
+    $coreAmount = round($coreBaseAmount * $discountFactor, 2);
+
+    $items = [];
+    $itemRules = [];
+    $items[$coreOption] = $coreAmount;
+    $itemRules[$coreOption] = [
+        'amount' => $coreAmount,
+        'base_amount' => $coreBaseAmount,
+        'repeat_count' => 1,
+        'discount_percent' => $discountPercent,
+    ];
+
+    foreach ($components as $label => $amount) {
+        if ((string)$label === $coreLabel) {
+            continue;
+        }
+
+        $resolvedLabel = trim((string)$label);
+        $resolvedAmount = round((float)$amount, 2);
+        if ($resolvedLabel === '' || $resolvedAmount <= 0) {
+            continue;
+        }
+
+        $items[$resolvedLabel] = $resolvedAmount;
+        $itemRules[$resolvedLabel] = [
+            'amount' => $resolvedAmount,
+            'base_amount' => $resolvedAmount,
+            'repeat_count' => 1,
+            'discount_percent' => 0.0,
+        ];
+    }
+
+    $standardTotal = 0.0;
+    $programTotal = 0.0;
+    foreach ($itemRules as $itemLabel => $rule) {
+        $itemAmount = round((float)($rule['amount'] ?? 0), 2);
+        $baseAmount = round((float)($rule['base_amount'] ?? $itemAmount), 2);
+        $repeatCount = max(1, (int)($rule['repeat_count'] ?? 1));
+
+        if ($itemLabel === $coreOption && $coreOption === 'Monthly Payment') {
+            $standardTotal += round($baseAmount * $installmentCount, 2);
+            $programTotal += round($itemAmount * $installmentCount, 2);
+            continue;
+        }
+
+        $standardTotal += round($baseAmount * $repeatCount, 2);
+        $programTotal += round($itemAmount * $repeatCount, 2);
+    }
+
+    $standardTotal = round($standardTotal, 2);
+    $programTotal = round($programTotal, 2);
+    if ($standardTotal <= 0) {
+        return [];
+    }
+
+    return [
+        'key' => $planKey,
+        'label' => (string)($planMeta['label'] ?? $planKey),
+        'core_option' => $coreOption,
+        'installment_count' => $installmentCount,
+        'program_total' => $programTotal,
+        'standard_total' => $standardTotal,
+        'discount_amount' => max(0, round($standardTotal - $programTotal, 2)),
+        'discount_percent' => $discountPercent,
+        'items' => $items,
+        'item_rules' => $itemRules,
+    ];
+}
+
 function smartenroll_resolve_grade_payment_plans(string $gradeValue, ?mysqli $conn = null, ?array $lookup = null): array
 {
     $row = smartenroll_find_grade_level($gradeValue, $conn, $lookup);
     $gradeKey = trim((string)($row['grade_key'] ?? $gradeValue));
+    $discountSettings = smartenroll_default_payment_plan_discount_map();
+    try {
+        $savedDiscountSettings = smartenroll_get_payment_plan_settings($gradeKey, $conn);
+        if ($savedDiscountSettings !== []) {
+            $discountSettings = $savedDiscountSettings;
+        }
+    } catch (Throwable $e) {
+        $discountSettings = smartenroll_default_payment_plan_discount_map();
+    }
+
+    $savedPlanBreakdowns = [];
+    try {
+        $savedPlanBreakdowns = smartenroll_get_saved_plan_breakdown_components($gradeKey, $conn);
+    } catch (Throwable $e) {
+        $savedPlanBreakdowns = [];
+    }
+
     $templates = smartenroll_grade_payment_plan_templates();
     $gradePlans = $templates[$gradeKey] ?? [];
     $resolved = [];
 
     foreach (smartenroll_payment_plan_defaults() as $planKey => $planMeta) {
+        $planDiscountPercent = max(0, round((float)($discountSettings[$planKey] ?? $planMeta['discount_percent'] ?? 0), 2));
+        if (isset($savedPlanBreakdowns[$planKey]) && is_array($savedPlanBreakdowns[$planKey]) && $savedPlanBreakdowns[$planKey] !== []) {
+            $savedPlan = smartenroll_build_payment_plan_from_components(
+                $planKey,
+                $planMeta,
+                $savedPlanBreakdowns[$planKey],
+                $planDiscountPercent
+            );
+            if ($savedPlan !== []) {
+                $resolved[$planKey] = $savedPlan;
+                continue;
+            }
+        }
+
         $template = $gradePlans[$planKey] ?? null;
         if (!is_array($template)) {
             continue;
@@ -854,35 +1048,36 @@ function smartenroll_resolve_grade_payment_plans(string $gradeValue, ?mysqli $co
 
         $coreOption = (string)($planMeta['core_option'] ?? 'Tuition Fee');
         $installmentCount = max(1, (int)($planMeta['installment_count'] ?? 1));
-        $planDiscountPercent = max(0, round((float)($planMeta['discount_percent'] ?? 0), 2));
         $items = [];
         $itemRules = [];
         foreach ((array)($template['items'] ?? []) as $label => $amount) {
             $itemLabel = trim((string)$label);
-            $itemAmount = 0.0;
+            $rawItemAmount = 0.0;
             $repeatCount = 1;
             $discountPercent = 0.0;
             $baseAmount = 0.0;
             if (is_array($amount)) {
-                $itemAmount = round((float)($amount['amount'] ?? 0), 2);
+                $rawItemAmount = round((float)($amount['amount'] ?? 0), 2);
                 $repeatCount = max(1, (int)($amount['repeat_count'] ?? 1));
                 $discountPercent = max(0, round((float)($amount['discount_percent'] ?? 0), 2));
                 $baseAmount = round((float)($amount['base_amount'] ?? 0), 2);
             } else {
-                $itemAmount = round((float)$amount, 2);
+                $rawItemAmount = round((float)$amount, 2);
             }
-            if ($itemLabel === '' || $itemAmount <= 0) {
+            if ($itemLabel === '' || $rawItemAmount <= 0) {
                 continue;
             }
             if ($itemLabel === $coreOption && $discountPercent <= 0 && $planDiscountPercent > 0) {
                 $discountPercent = $planDiscountPercent;
             }
             if ($baseAmount <= 0) {
-                $discountFactor = max(0, 1 - ($discountPercent / 100));
-                $baseAmount = $discountPercent > 0 && $discountFactor > 0
-                    ? round($itemAmount / $discountFactor, 2)
-                    : $itemAmount;
+                $baseAmount = $rawItemAmount;
             }
+
+            $discountFactor = max(0, 1 - ($discountPercent / 100));
+            $itemAmount = $discountPercent > 0
+                ? round($baseAmount * $discountFactor, 2)
+                : $rawItemAmount;
             $items[$itemLabel] = $itemAmount;
             $itemRules[$itemLabel] = [
                 'amount' => $itemAmount,
@@ -1042,7 +1237,9 @@ function smartenroll_get_saved_breakdown_components(?string $gradeKey = null, ?m
             if ($row !== null) {
                 $components = json_decode((string)($row['components'] ?? '{}'), true);
                 $components = is_array($components) ? $components : [];
-                return smartenroll_filter_grade_breakdown_components($components, $gradeKey);
+                return smartenroll_normalize_plan_breakdown_components($components, $gradeKey) !== []
+                    ? $components
+                    : smartenroll_filter_grade_breakdown_components($components, $gradeKey);
             }
             return [];
         }
@@ -1054,7 +1251,9 @@ function smartenroll_get_saved_breakdown_components(?string $gradeKey = null, ?m
             $key = (string)($row['grade_key'] ?? '');
             $components = json_decode((string)($row['components'] ?? '{}'), true);
             $components = is_array($components) ? $components : [];
-            $allComponents[$key] = smartenroll_filter_grade_breakdown_components($components, $key);
+            $allComponents[$key] = smartenroll_normalize_plan_breakdown_components($components, $key) !== []
+                ? $components
+                : smartenroll_filter_grade_breakdown_components($components, $key);
         }
         return $allComponents;
     } finally {
@@ -1068,16 +1267,73 @@ function smartenroll_get_grade_breakdown_map(?mysqli $conn = null): array
 {
     $tuitionMap = smartenroll_get_grade_tuition_map($conn);
     $templates = smartenroll_grade_breakdown_templates();
-    $savedComponents = smartenroll_get_saved_breakdown_components(null, $conn);
+    $savedPlanComponents = smartenroll_get_saved_plan_breakdown_components(null, $conn);
     $result = [];
 
     foreach ($tuitionMap as $gradeKey => $tuitionFee) {
-        if (isset($savedComponents[$gradeKey]) && !empty($savedComponents[$gradeKey])) {
-            $result[$gradeKey] = smartenroll_filter_grade_breakdown_components($savedComponents[$gradeKey], $gradeKey);
+        if (isset($savedPlanComponents[$gradeKey]['annual']) && !empty($savedPlanComponents[$gradeKey]['annual'])) {
+            $result[$gradeKey] = smartenroll_filter_grade_breakdown_components($savedPlanComponents[$gradeKey]['annual'], $gradeKey);
         } else {
             $template = $templates[$gradeKey] ?? ['Tuition Fee' => $tuitionFee];
             $result[$gradeKey] = smartenroll_filter_grade_breakdown_components($template, $gradeKey);
         }
+    }
+
+    return $result;
+}
+
+function smartenroll_template_plan_components(array $templateItems, string $gradeKey): array
+{
+    $components = [];
+    foreach ($templateItems as $label => $amount) {
+        $componentLabel = trim((string)$label);
+        if ($componentLabel === '') {
+            continue;
+        }
+
+        if (is_array($amount)) {
+            $componentAmount = round((float)($amount['base_amount'] ?? $amount['amount'] ?? 0), 2);
+        } else {
+            $componentAmount = round((float)$amount, 2);
+        }
+
+        if ($componentAmount > 0) {
+            $components[$componentLabel] = $componentAmount;
+        }
+    }
+
+    return smartenroll_filter_grade_breakdown_components($components, $gradeKey);
+}
+
+function smartenroll_get_grade_plan_breakdown_map(?mysqli $conn = null): array
+{
+    $tuitionMap = smartenroll_get_grade_tuition_map($conn);
+    $templates = smartenroll_grade_payment_plan_templates();
+    $savedPlanComponents = smartenroll_get_saved_plan_breakdown_components(null, $conn);
+    $result = [];
+
+    foreach ($tuitionMap as $gradeKey => $tuitionFee) {
+        $gradePlanMap = [];
+        foreach (smartenroll_payment_plan_defaults() as $planKey => $planMeta) {
+            if (isset($savedPlanComponents[$gradeKey][$planKey]) && $savedPlanComponents[$gradeKey][$planKey] !== []) {
+                $gradePlanMap[$planKey] = $savedPlanComponents[$gradeKey][$planKey];
+                continue;
+            }
+
+            $templateItems = $templates[$gradeKey][$planKey]['items'] ?? null;
+            if (is_array($templateItems) && $templateItems !== []) {
+                $gradePlanMap[$planKey] = smartenroll_template_plan_components($templateItems, (string)$gradeKey);
+                continue;
+            }
+
+            $coreOption = (string)($planMeta['core_option'] ?? 'Tuition Fee');
+            $fallbackAmount = $coreOption === 'Monthly Payment'
+                ? round((float)$tuitionFee / max(1, (int)($planMeta['installment_count'] ?? 1)), 2)
+                : round((float)$tuitionFee, 2);
+            $gradePlanMap[$planKey] = [$coreOption => $fallbackAmount];
+        }
+
+        $result[(string)$gradeKey] = $gradePlanMap;
     }
 
     return $result;
@@ -1093,10 +1349,9 @@ function smartenroll_resolve_grade_breakdown(string $gradeValue, ?mysqli $conn =
     $gradeKey = (string)($row['grade_key'] ?? '');
     $tuitionFee = round((float)($row['tuition_fee'] ?? 0), 2);
     
-    // Check for saved components first
-    $savedComponents = smartenroll_get_saved_breakdown_components($gradeKey, $conn);
-    if (!empty($savedComponents)) {
-        return $savedComponents;
+    $savedPlanComponents = smartenroll_get_saved_plan_breakdown_components($gradeKey, $conn);
+    if (!empty($savedPlanComponents['annual'])) {
+        return $savedPlanComponents['annual'];
     }
 
     $template = smartenroll_grade_breakdown_templates()[$gradeKey] ?? ['Tuition Fee' => $tuitionFee];
