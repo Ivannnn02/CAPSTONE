@@ -105,6 +105,11 @@
     color: #ffffff;
 }
 
+.tuition-overview-copy {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 .tuition-overview-label {
     display: inline-block;
     margin-bottom: 10px;
@@ -130,9 +135,10 @@
 
 .tuition-overview-meta {
     display: grid;
-    grid-template-columns: repeat(3, minmax(140px, 1fr));
+    grid-template-columns: repeat(2, minmax(120px, max-content));
     gap: 12px;
-    width: min(430px, 100%);
+    justify-content: end;
+    margin-left: auto;
 }
 
 .tuition-meta-chip {
@@ -285,48 +291,15 @@
     margin: 28px 0 0;
 }
 
-.tuition-actions {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 28px;
-}
-
-.tuition-email-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    border: none;
-    border-radius: 999px;
-    padding: 13px 22px;
-    background: linear-gradient(135deg, #1d4ed8, #16356b);
-    color: #ffffff;
-    font-family: 'Poppins', sans-serif;
-    font-size: 0.95rem;
-    font-weight: 600;
-    cursor: pointer;
-    box-shadow: 0 14px 28px rgba(29, 78, 216, 0.22);
-    transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
-}
-
-.tuition-email-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 18px 34px rgba(29, 78, 216, 0.28);
-}
-
-.tuition-email-btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.58;
-    box-shadow: none;
-}
-
 @media (max-width: 1080px) {
     .tuition-overview {
         flex-direction: column;
     }
 
     .tuition-overview-meta {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         width: 100%;
+        margin-left: 0;
     }
 
     .tuition-summary-grid,
@@ -360,14 +333,6 @@
         grid-template-columns: 1fr;
     }
 
-    .tuition-actions {
-        justify-content: stretch;
-    }
-
-    .tuition-email-btn {
-        width: 100%;
-        justify-content: center;
-    }
 }
 
 /* Grade Level History Table Styles */
@@ -583,6 +548,7 @@
 
 .payment-table {
     width: 100%;
+    min-width: 860px;
     border-collapse: collapse;
     background: #ffffff;
 }
@@ -600,6 +566,7 @@
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: #19325a;
+    vertical-align: middle;
 }
 
 .payment-table tbody tr {
@@ -619,11 +586,111 @@
     padding: 14px;
     font-size: 0.95rem;
     color: #10213d;
+    line-height: 1.45;
+    vertical-align: middle;
 }
 
 .payment-table .amount-col {
     text-align: right;
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.payment-table td strong {
+    white-space: nowrap;
+}
+
+.payment-history-table th:nth-child(3),
+.payment-history-table th:nth-child(5),
+.saved-invoice-table th:nth-child(4),
+.saved-invoice-table th:nth-child(5),
+.sent-email-table th:nth-child(5) {
+    text-align: right;
+}
+
+.saved-invoice-table th:nth-child(6),
+.saved-invoice-table td:nth-child(6) {
+    text-align: center;
+}
+
+.payment-history-table th:nth-child(1),
+.payment-history-table td:nth-child(1) {
+    width: 18%;
+}
+
+.payment-history-table th:nth-child(2),
+.payment-history-table td:nth-child(2) {
+    width: 18%;
+}
+
+.payment-history-table th:nth-child(3),
+.payment-history-table td:nth-child(3),
+.payment-history-table th:nth-child(5),
+.payment-history-table td:nth-child(5) {
+    width: 20%;
+}
+
+.payment-history-table th:nth-child(4),
+.payment-history-table td:nth-child(4) {
+    width: 18%;
+}
+
+.saved-invoice-table th:nth-child(1),
+.saved-invoice-table td:nth-child(1) {
+    width: 12%;
+}
+
+.saved-invoice-table th:nth-child(2),
+.saved-invoice-table td:nth-child(2) {
+    width: 10%;
+}
+
+.saved-invoice-table th:nth-child(3),
+.saved-invoice-table td:nth-child(3) {
+    width: 38%;
+}
+
+.saved-invoice-table th:nth-child(4),
+.saved-invoice-table td:nth-child(4),
+.saved-invoice-table th:nth-child(5),
+.saved-invoice-table td:nth-child(5) {
+    width: 15%;
+}
+
+.saved-invoice-table th:nth-child(6),
+.saved-invoice-table td:nth-child(6) {
+    width: 10%;
+}
+
+.sent-email-table th:nth-child(1),
+.sent-email-table td:nth-child(1) {
+    width: 18%;
+}
+
+.sent-email-table th:nth-child(2),
+.sent-email-table td:nth-child(2) {
+    width: 15%;
+}
+
+.sent-email-table th:nth-child(3),
+.sent-email-table td:nth-child(3) {
+    width: 12%;
+}
+
+.sent-email-table th:nth-child(4),
+.sent-email-table td:nth-child(4) {
+    width: 26%;
+}
+
+.sent-email-table th:nth-child(5),
+.sent-email-table td:nth-child(5) {
+    width: 14%;
+}
+
+.sent-email-table th:nth-child(6),
+.sent-email-table td:nth-child(6) {
+    width: 15%;
 }
 
 .payment-table .amount-col.balance-settled {

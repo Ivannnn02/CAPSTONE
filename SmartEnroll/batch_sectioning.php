@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/enrollment_form_config.php';
 
 smartenroll_require_role('finance');
 
@@ -8,6 +9,9 @@ mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 $selectionRows = [];
 $schoolYearOptions = [];
 $gradeLevelOptions = [];
+$activeGradeKeys = [];
+$activeGradeLabelsByKey = [];
+$activeGradeValueToKey = [];
 $errorMessage = '';
 $selectedSchoolYear = isset($_GET['school_year']) ? trim((string)$_GET['school_year']) : '';
 $selectedGradeLevel = isset($_GET['grade_level']) ? trim((string)$_GET['grade_level']) : '';
@@ -65,6 +69,26 @@ try {
     $conn = connectEnrollmentDb();
     ensureBatchAssignmentsTable($conn);
 
+    foreach (smartenroll_get_grade_levels($conn) as $gradeLevelRow) {
+        $gradeKey = trim((string)($gradeLevelRow['grade_key'] ?? ''));
+        if ($gradeKey === '') {
+            continue;
+        }
+
+        $gradeLevelOptions[] = [
+            'key' => $gradeKey,
+            'label' => trim((string)($gradeLevelRow['grade_label'] ?? '')) ?: $gradeKey,
+        ];
+        $activeGradeKeys[] = $gradeKey;
+        $activeGradeLabelsByKey[$gradeKey] = trim((string)($gradeLevelRow['grade_label'] ?? '')) ?: $gradeKey;
+        $activeGradeValueToKey[$gradeKey] = $gradeKey;
+        $activeGradeValueToKey[$activeGradeLabelsByKey[$gradeKey]] = $gradeKey;
+    }
+
+    if ($selectedGradeLevel !== '') {
+        $selectedGradeLevel = $activeGradeValueToKey[$selectedGradeLevel] ?? '';
+    }
+
     $schoolYearRes = $conn->query("
         SELECT DISTINCT school_year
         FROM (
@@ -77,20 +101,6 @@ try {
     ");
     while ($row = $schoolYearRes->fetch_assoc()) {
         $schoolYearOptions[] = $row['school_year'];
-    }
-
-    $gradeLevelRes = $conn->query("
-        SELECT DISTINCT grade_level
-        FROM (
-            SELECT COALESCE(grade_level, '') AS grade_level FROM enrollments
-            UNION
-            SELECT COALESCE(grade_level, '') AS grade_level FROM batch_assignments
-        ) grade_level_source
-        WHERE COALESCE(grade_level, '') <> ''
-        ORDER BY grade_level ASC
-    ");
-    while ($row = $gradeLevelRes->fetch_assoc()) {
-        $gradeLevelOptions[] = $row['grade_level'];
     }
 
     $sql = "
@@ -110,6 +120,16 @@ try {
 
     $params = [];
     $types = '';
+    $activeGradeValues = array_values(array_unique(array_keys($activeGradeValueToKey)));
+    if ($activeGradeValues !== []) {
+        $sql .= " AND COALESCE(grade_level, '') IN (" . implode(',', array_fill(0, count($activeGradeValues), '?')) . ") ";
+        foreach ($activeGradeValues as $gradeKey) {
+            $params[] = $gradeKey;
+            $types .= 's';
+        }
+    } else {
+        $sql .= " AND 1 = 0 ";
+    }
     if ($selectedSchoolYear !== '') {
         $sql .= " AND COALESCE(school_year, '') = ? ";
         $params[] = $selectedSchoolYear;
@@ -131,9 +151,19 @@ try {
         $resOptions = $conn->query($sql);
     }
 
+    $selectionRowsByKey = [];
     while ($row = $resOptions->fetch_assoc()) {
-        $selectionRows[] = $row;
+        $gradeKey = $activeGradeValueToKey[(string)$row['grade_level']] ?? '';
+        if ($gradeKey === '') {
+            continue;
+        }
+
+        $selectionKey = (string)$row['school_year'] . '|' . $gradeKey;
+        $row['grade_level'] = $gradeKey;
+        $row['grade_label'] = $activeGradeLabelsByKey[$gradeKey] ?? $gradeKey;
+        $selectionRowsByKey[$selectionKey] = $row;
     }
+    $selectionRows = array_values($selectionRowsByKey);
 
     if (empty($selectionRows)) {
         $errorMessage = 'No School Year and Grade Level records found yet.';
@@ -183,8 +213,8 @@ try {
                 <select name="grade_level" class="sort-select">
                     <option value="">All Grade Levels</option>
                     <?php foreach ($gradeLevelOptions as $gradeLevel): ?>
-                        <option value="<?= htmlspecialchars($gradeLevel) ?>" <?= $selectedGradeLevel === $gradeLevel ? 'selected' : '' ?>>
-                            <?= htmlspecialchars($gradeLevel) ?>
+                        <option value="<?= htmlspecialchars($gradeLevel['key']) ?>" <?= $selectedGradeLevel === $gradeLevel['key'] ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($gradeLevel['label']) ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
@@ -213,7 +243,7 @@ try {
                             <?php foreach ($selectionRows as $row): ?>
                                 <tr>
                                     <td><?= htmlspecialchars($row['school_year']) ?></td>
-                                    <td><?= htmlspecialchars($row['grade_level']) ?></td>
+                                    <td><?= htmlspecialchars($row['grade_label']) ?></td>
                                     <td>
                                         <a
                                             class="table-action-btn"

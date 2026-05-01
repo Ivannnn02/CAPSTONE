@@ -249,10 +249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
             <p class="login-intro-sub">
                 Sign in to review requirements, confirm enrollment records, and manage billing from one place.
             </p>
-            <div class="login-role-note">
-                <h3>Account rules</h3>
-                <p>Employee ID and email address must both be unique for each account.</p>
-            </div>
+            
         </div>
 
         <div class="login-card" data-active-tab="<?php echo htmlspecialchars($activeTab, ENT_QUOTES, 'UTF-8'); ?>">
@@ -289,12 +286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
                             <span class="password-icon"><i class="fa-solid fa-eye"></i></span>
                         </div>
                     </label>
-                    <div class="login-meta">
-                        <label class="remember">
-                            <input type="checkbox" name="remember" id="rememberLogin">
-                            Remember me
-                        </label>
-                    </div>
+                    
                     <button class="login-submit" type="submit">Sign In</button>
                     <div class="login-help">
                         <p>Use the official school account to continue to the SMARTENROLL dashboard.</p>

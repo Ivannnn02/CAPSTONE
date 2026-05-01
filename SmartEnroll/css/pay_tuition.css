@@ -3580,3 +3580,10 @@ html {
         min-width: 0;
     }
 }
+.receipt-details-page .invoice-email-preview-panel.is-plan-hidden {
+    display: none;
+}
+
+.receipt-details-page .gmail-history-block.is-plan-hidden {
+    display: none;
+}

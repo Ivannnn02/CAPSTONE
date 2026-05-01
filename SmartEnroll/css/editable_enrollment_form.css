@@ -85,6 +85,55 @@
     line-height: 1.5;
 }
 
+.grade-discount-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(118px, 1fr));
+    gap: 10px;
+    min-width: min(100%, 430px);
+}
+
+.grade-discount-field {
+    display: grid;
+    grid-template-columns: 1fr 48px auto;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid #dbe4f0;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.9);
+}
+
+.grade-discount-field span {
+    color: #344054;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+.grade-discount-field input {
+    width: 100%;
+    min-width: 0;
+    padding: 7px 6px;
+    border: 1px solid #d0d5dd;
+    border-radius: 8px;
+    color: #101828;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: right;
+}
+
+.grade-discount-field input:focus {
+    outline: none;
+    border-color: #2d76c9;
+    box-shadow: 0 0 0 3px rgba(45, 118, 201, 0.12);
+}
+
+.grade-discount-field small {
+    color: #667085;
+    font-size: 12px;
+    font-weight: 700;
+}
+
 .grade-plan-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -1046,6 +1095,16 @@ tr.is-deleted input[data-existing-field-input] {
 @media (max-width: 768px) {
     .grade-plan-panel {
         padding: 16px;
+    }
+
+    .grade-plan-panel-head {
+        flex-direction: column;
+    }
+
+    .grade-discount-grid {
+        grid-template-columns: 1fr;
+        width: 100%;
+        min-width: 0;
     }
 
     .grade-plan-grid {

@@ -43,6 +43,7 @@ const invoiceEmailBodyDueDate = document.getElementById('invoiceEmailBodyDueDate
 const invoiceEmailItems = document.getElementById('invoiceEmailItems');
 const invoiceEmailPrintTrigger = document.getElementById('invoiceEmailPrintTrigger');
 const invoiceEmailSendTrigger = document.getElementById('invoiceEmailSendTrigger');
+const monthlyOnlyPreviewPanels = Array.from(document.querySelectorAll('[data-monthly-only-preview]'));
 const selectedInvoicePrintTrigger = document.getElementById('selectedInvoicePrintTrigger');
 const paymentPlanInput = document.getElementById('paymentPlanInput');
 const paymentPlanButtons = Array.from(document.querySelectorAll('.payment-plan-btn[data-plan-option]'));
@@ -498,6 +499,20 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
       }
     });
   };
+  const syncMonthlyOnlyPreview = () => {
+    if (!monthlyOnlyPreviewPanels.length) {
+      return;
+    }
+
+    const isMonthlyPlan = activePaymentPlanKey === 'monthly';
+    monthlyOnlyPreviewPanels.forEach((panel) => {
+      panel.classList.toggle('is-plan-hidden', !isMonthlyPlan);
+      panel.setAttribute('aria-hidden', isMonthlyPlan ? 'false' : 'true');
+    });
+    if (!isMonthlyPlan) {
+      setInvoiceEmailCatalogOpen(false);
+    }
+  };
   const setCatalogOpen = (isOpen) => {
     paymentCatalog.classList.toggle('is-open', isOpen);
     if (receiptAddTrigger) {
@@ -751,6 +766,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
 
     renderCatalogRows(nextConfig.catalog || []);
     syncPlanButtons();
+    syncMonthlyOnlyPreview();
     syncPlanSummary();
     syncEmptyState();
     syncTotals();

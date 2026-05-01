@@ -241,7 +241,6 @@ foreach (array_keys($requirements) as $key) {
                 <div class="requirements-panel checklist-panel">
                     <div class="requirements-panel-head">
                     <h3>Automatic Checklist</h3>
-                    <p>The checklist marks each requirement complete once a file is uploaded.</p>
                 </div>
                 <div class="checklist-list">
                     <?php foreach ($requirements as $key => $label): ?>
@@ -263,7 +262,6 @@ foreach (array_keys($requirements) as $key) {
             <section class="requirements-panel upload-workbench">
                 <div class="requirements-panel-head upload-workbench-head">
                     <h3>Upload Files</h3>
-                    <p>Each row below is a document slot. Upload a file and the checklist updates automatically.</p>
                 </div>
                 <div class="upload-card-list">
                     <?php foreach ($requirements as $key => $label): ?>

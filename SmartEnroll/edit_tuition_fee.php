@@ -28,6 +28,26 @@ function smartenroll_parse_fee_value(mixed $value): float
     return $fee;
 }
 
+function smartenroll_parse_discount_percent(mixed $value): float
+{
+    $raw = trim((string)$value);
+    if ($raw === '') {
+        return 0.0;
+    }
+
+    $normalized = str_replace(',', '', $raw);
+    if (!is_numeric($normalized)) {
+        throw new RuntimeException('Discount must be a valid number.');
+    }
+
+    $discount = round((float)$normalized, 2);
+    if ($discount < 0 || $discount > 100) {
+        throw new RuntimeException('Discount must be between 0 and 100 percent.');
+    }
+
+    return $discount;
+}
+
 function smartenroll_get_or_create_grade_breakdown_table(?mysqli $conn = null): void
 {
     $ownsConnection = false;
@@ -133,7 +153,24 @@ $errorMessage = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? '') === 'save_tuition_breakdown') {
     try {
         $breakdownData = [];
+        $discountSettings = [];
         $formComponents = $_POST['components'] ?? [];
+        $formDiscounts = $_POST['discounts'] ?? [];
+
+        if (is_array($formDiscounts)) {
+            foreach ($formDiscounts as $gradeKey => $gradeDiscountData) {
+                $gradeKey = trim((string)$gradeKey);
+                if ($gradeKey === '' || !is_array($gradeDiscountData)) {
+                    continue;
+                }
+
+                foreach (array_keys(smartenroll_payment_plan_defaults()) as $planKey) {
+                    $discountSettings[$gradeKey][$planKey] = smartenroll_parse_discount_percent(
+                        $gradeDiscountData[$planKey] ?? 0
+                    );
+                }
+            }
+        }
 
         foreach ($formComponents as $gradeKey => $gradeComponentData) {
             $gradeKey = trim((string)$gradeKey);
@@ -185,6 +222,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? '') === '
         }
 
         smartenroll_save_grade_breakdown_components($breakdownData);
+        smartenroll_save_payment_plan_settings($discountSettings);
         smartenroll_sync_tuition_payment_totals();
         header('Location: edit_tuition_fee.php?status=saved');
         exit;
@@ -289,18 +327,64 @@ try {
                                 <span class="grade-plan-eyebrow">Payment Plan Rates</span>
                                 <p>These are the exact rates currently used in tuition receipt details for this grade level.</p>
                             </div>
+                            <div class="grade-discount-grid" aria-label="Payment plan discounts">
+                                <?php foreach (smartenroll_payment_plan_defaults() as $discountPlanKey => $discountPlanMeta): ?>
+                                    <label class="grade-discount-field">
+                                        <span><?php echo htmlspecialchars((string)($discountPlanMeta['label'] ?? ucfirst($discountPlanKey))); ?></span>
+                                        <input
+                                            type="number"
+                                            name="discounts[<?php echo htmlspecialchars($gradeKey, ENT_QUOTES); ?>][<?php echo htmlspecialchars($discountPlanKey, ENT_QUOTES); ?>]"
+                                            value="<?php echo htmlspecialchars(number_format((float)($gradePlanDiscounts[$discountPlanKey] ?? 0), 2, '.', '')); ?>"
+                                            min="0"
+                                            max="100"
+                                            step="0.01"
+                                            inputmode="decimal"
+                                            class="plan-discount-input"
+                                            data-plan-discount-input="<?php echo htmlspecialchars($discountPlanKey, ENT_QUOTES); ?>"
+                                        >
+                                        <small>%</small>
+                                    </label>
+                                <?php endforeach; ?>
+                            </div>
                         </div>
 
                         <div class="grade-plan-grid">
-                            <?php foreach (['annual', 'semestral', 'monthly'] as $planKey): ?>
-                                <?php if (!isset($planSummary[$planKey]) || !is_array($planSummary[$planKey])) { continue; } ?>
+                            <?php foreach (smartenroll_payment_plan_defaults() as $planKey => $planMeta): ?>
                                 <?php
-                                    $plan = $planSummary[$planKey];
+                                    $plan = isset($planSummary[$planKey]) && is_array($planSummary[$planKey])
+                                        ? $planSummary[$planKey]
+                                        : [];
                                     $planRules = is_array($plan['item_rules'] ?? null) ? $plan['item_rules'] : [];
+                                    if ($planRules === []) {
+                                        $fallbackComponents = is_array($breakdown[$planKey] ?? null) ? $breakdown[$planKey] : [];
+                                        foreach ($fallbackComponents as $fallbackLabel => $fallbackAmount) {
+                                            $resolvedLabel = trim((string)$fallbackLabel);
+                                            if ($resolvedLabel === '') {
+                                                continue;
+                                            }
+
+                                            $resolvedAmount = max(0, round((float)$fallbackAmount, 2));
+                                            $planRules[$resolvedLabel] = [
+                                                'amount' => $resolvedAmount,
+                                                'base_amount' => $resolvedAmount,
+                                                'repeat_count' => 1,
+                                                'discount_percent' => 0,
+                                            ];
+                                        }
+                                    }
+                                    if ($planRules === []) {
+                                        $coreFallback = (string)($planMeta['core_option'] ?? 'Tuition Fee');
+                                        $planRules[$coreFallback] = [
+                                            'amount' => 0,
+                                            'base_amount' => 0,
+                                            'repeat_count' => 1,
+                                            'discount_percent' => 0,
+                                        ];
+                                    }
                                     $paymentCountLabel = $planKey === 'monthly'
                                         ? '10 months'
                                         : ($planKey === 'semestral' ? '2 payments' : '1 payment');
-                                    $coreOption = trim((string)($plan['core_option'] ?? ''));
+                                    $coreOption = trim((string)($plan['core_option'] ?? $planMeta['core_option'] ?? 'Tuition Fee'));
                                     $planDiscountAmount = max(0, round((float)($plan['discount_amount'] ?? 0), 2));
                                     $planDiscountPercent = max(0, round((float)($plan['discount_percent'] ?? 0), 2));
                                     $planDiscountLabel = $planDiscountAmount > 0
@@ -316,7 +400,7 @@ try {
                                     aria-expanded="<?php echo $planKey === 'annual' ? 'true' : 'false'; ?>"
                                 >
                                     <span class="grade-plan-label-row">
-                                        <strong><?php echo htmlspecialchars((string)($plan['label'] ?? ucfirst($planKey))); ?></strong>
+                                        <strong><?php echo htmlspecialchars((string)($plan['label'] ?? $planMeta['label'] ?? ucfirst($planKey))); ?></strong>
                                         <small><?php echo htmlspecialchars($paymentCountLabel); ?></small>
                                     </span>
                                     <span class="grade-plan-total" data-plan-total>
@@ -679,6 +763,20 @@ try {
             if (section) {
                 updateGradeTotals(section);
             }
+        }
+
+        if (event.target.matches('.plan-discount-input')) {
+            const section = event.target.closest('.settings-subsection');
+            if (!section) {
+                return;
+            }
+
+            const discounts = {};
+            section.querySelectorAll('.plan-discount-input[data-plan-discount-input]').forEach((input) => {
+                discounts[input.dataset.planDiscountInput || ''] = Math.min(100, Math.max(0, parseMoneyValue(input.value)));
+            });
+            section.dataset.planDiscounts = JSON.stringify(discounts);
+            updateGradeTotals(section);
         }
     });
 

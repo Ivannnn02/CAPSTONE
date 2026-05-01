@@ -3,16 +3,11 @@ require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/enrollment_form_config.php';
 smartenroll_auth_start_session();
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-require_once __DIR__ . '/mail/PHPMailer/mail_helper.php';
 
 $currentUser = smartenroll_require_role('finance');
 
 $student = null;
 $error = '';
-$successMessage = $_SESSION['tuition_details_success'] ?? '';
-$warningMessage = $_SESSION['tuition_details_warning'] ?? '';
-$lastEmailError = '';
-unset($_SESSION['tuition_details_success'], $_SESSION['tuition_details_warning']);
 
 function format_name(array $row): string
 {
@@ -96,61 +91,6 @@ function summarize_payment_items(array $items, string $emptyLabel = 'N/A'): stri
 
     $labels = array_values(array_unique($labels));
     return $labels !== [] ? implode(', ', $labels) : $emptyLabel;
-}
-
-function send_tuition_details_email(array $student, float $totalTuition, float $amountPaid, float $remainingBalance): bool
-{
-    global $lastEmailError;
-
-    $to = trim((string)($student['email'] ?? ''));
-    if (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
-        $lastEmailError = 'This student does not have a valid enrollment email address.';
-        return false;
-    }
-
-    $studentName = format_name($student);
-    $subject = 'SMARTENROLL Tuition Details - ' . ($student['student_id'] ?? '');
-    $html = '
-    <html>
-    <body style="margin:0;padding:24px;background:#f5f7fb;font-family:Arial,sans-serif;color:#1f2937;">
-        <div style="max-width:720px;margin:0 auto;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #e5e7eb;">
-            <div style="padding:24px 28px;background:linear-gradient(135deg,#19325a,#1e88e5);color:#ffffff;">
-                <h2 style="margin:0 0 8px;">Tuition Details</h2>
-                <p style="margin:0;font-size:14px;opacity:.92;">This tuition summary was sent from SMARTENROLL.</p>
-            </div>
-            <div style="padding:28px;">
-                <p style="margin-top:0;">Good day,</p>
-                <p>Here are the current tuition details for <strong>' . htmlspecialchars($studentName) . '</strong>.</p>
-                <table style="width:100%;border-collapse:collapse;margin:18px 0;">
-                    <tr><td style="padding:10px;border:1px solid #e5e7eb;background:#f8fafc;">Student ID</td><td style="padding:10px;border:1px solid #e5e7eb;">' . htmlspecialchars((string)($student['student_id'] ?? '')) . '</td></tr>
-                    <tr><td style="padding:10px;border:1px solid #e5e7eb;background:#f8fafc;">Student Name</td><td style="padding:10px;border:1px solid #e5e7eb;">' . htmlspecialchars($studentName) . '</td></tr>
-                    <tr><td style="padding:10px;border:1px solid #e5e7eb;background:#f8fafc;">Grade Level</td><td style="padding:10px;border:1px solid #e5e7eb;">' . htmlspecialchars((string)($student['grade_level'] ?? '')) . '</td></tr>
-                    <tr><td style="padding:10px;border:1px solid #e5e7eb;background:#f8fafc;">School Year</td><td style="padding:10px;border:1px solid #e5e7eb;">' . htmlspecialchars((string)($student['school_year'] ?? '')) . '</td></tr>
-                    <tr><td style="padding:10px;border:1px solid #e5e7eb;background:#f8fafc;">Total Tuition</td><td style="padding:10px;border:1px solid #e5e7eb;">' . htmlspecialchars(format_money($totalTuition)) . '</td></tr>
-                    <tr><td style="padding:10px;border:1px solid #e5e7eb;background:#f8fafc;">Amount Paid</td><td style="padding:10px;border:1px solid #e5e7eb;">' . htmlspecialchars(format_money($amountPaid)) . '</td></tr>
-                    <tr><td style="padding:10px;border:1px solid #e5e7eb;background:#f8fafc;">Remaining Balance</td><td style="padding:10px;border:1px solid #e5e7eb;">' . htmlspecialchars(format_money($remainingBalance)) . '</td></tr>
-                </table>
-                <p style="margin-bottom:0;">Thank you.<br>SMARTENROLL / Adreo Montessori Inc.</p>
-            </div>
-        </div>
-    </body>
-    </html>';
-
-    $text = implode("\r\n", [
-        'Tuition Details',
-        '',
-        'Student ID: ' . ($student['student_id'] ?? ''),
-        'Student Name: ' . $studentName,
-        'Grade Level: ' . ($student['grade_level'] ?? ''),
-        'School Year: ' . ($student['school_year'] ?? ''),
-        'Total Tuition: ' . format_money($totalTuition),
-        'Amount Paid: ' . format_money($amountPaid),
-        'Remaining Balance: ' . format_money($remainingBalance),
-        '',
-        'SMARTENROLL / Adreo Montessori Inc.',
-    ]);
-
-    return smtp_send_mail($to, $subject, $html, $text, $lastEmailError);
 }
 
 try {
@@ -483,27 +423,6 @@ if ($student && isset($conn) && $conn instanceof mysqli) {
     });
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error === '') {
-    $csrfToken = trim((string)($_POST['csrf_token'] ?? ''));
-    if (!smartenroll_verify_csrf($csrfToken, 'tuition_details_form')) {
-        $warningMessage = 'Session verification failed. Please refresh and try again.';
-    }
-
-    $action = trim((string)($_POST['action'] ?? ''));
-    if ($action === 'send_tuition_details' && $warningMessage === '') {
-        $sent = send_tuition_details_email($student, $totalTuition, $amountPaid, $remainingBalance);
-        if ($sent) {
-            $_SESSION['tuition_details_success'] = 'Tuition details sent to ' . trim((string)($student['email'] ?? '')) . '.';
-        } else {
-            $_SESSION['tuition_details_warning'] = $lastEmailError ?: 'The tuition details email could not be sent.';
-        }
-
-        header('Location: tuition_details.php?student_id=' . urlencode((string)$studentId));
-        exit;
-    }
-}
-
-$tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -532,12 +451,6 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
 
     <section class="tuition-section">
         <div class="tuition-card tuition-form-card">
-            <?php if ($successMessage): ?>
-                <div class="tuition-alert success"><?php echo htmlspecialchars($successMessage); ?></div>
-            <?php endif; ?>
-            <?php if ($warningMessage): ?>
-                <div class="tuition-alert warning"><?php echo htmlspecialchars($warningMessage); ?></div>
-            <?php endif; ?>
             <?php if ($error): ?>
                 <div class="student-error"><strong>Unable to load student.</strong> <?php echo htmlspecialchars($error); ?></div>
             <?php else: ?>
@@ -662,7 +575,7 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                         </div>
 
                         <div class="payment-details-table">
-                            <table class="payment-table">
+                            <table class="payment-table payment-history-table">
                                 <thead>
                                     <tr>
                                         <th>Date</th>
@@ -680,11 +593,10 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                         <div class="history-subsection">
                             <div class="tuition-section-head history-panel-head">
                                 <h4>Saved Invoices</h4>
-                                <p>Saved invoices for the selected grade level.</p>
                             </div>
 
                             <div class="payment-details-table">
-                                <table class="payment-table">
+                                <table class="payment-table saved-invoice-table">
                                     <thead>
                                         <tr>
                                             <th>Date</th>
@@ -708,7 +620,7 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                             </div>
 
                             <div class="payment-details-table">
-                                <table class="payment-table">
+                                <table class="payment-table sent-email-table">
                                     <thead>
                                         <tr>
                                             <th>Sent</th>
@@ -730,17 +642,6 @@ $tuitionDetailsCsrfToken = smartenroll_csrf_token('tuition_details_form');
                 <hr class="tuition-divider">
                 <?php endif; ?>
 
-                <div class="tuition-actions">
-                    <form method="post" action="tuition_details.php">
-                        <input type="hidden" name="action" value="send_tuition_details">
-                        <input type="hidden" name="student_id" value="<?php echo htmlspecialchars((string)$student['student_id']); ?>">
-                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($tuitionDetailsCsrfToken); ?>">
-                        <button type="submit" class="tuition-email-btn" <?php echo filter_var((string)($student['email'] ?? ''), FILTER_VALIDATE_EMAIL) ? '' : 'disabled'; ?>>
-                            <i class="fa-solid fa-paper-plane"></i>
-                            Send Tuition Details to Email
-                        </button>
-                    </form>
-                </div>
             <?php endif; ?>
         </div>
     </section>

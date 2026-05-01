@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/enrollment_form_config.php';
 
 smartenroll_require_role('finance');
 
@@ -11,6 +12,7 @@ $successMessage = 'Batch has been successfully saved!';
 $showSavedPopup = isset($_GET['saved']) && $_GET['saved'] === '1';
 $selectedSchoolYear = isset($_GET['school_year']) ? trim((string)$_GET['school_year']) : '';
 $selectedGrade = isset($_GET['grade_level']) ? trim((string)$_GET['grade_level']) : '';
+$selectedGradeLabel = $selectedGrade;
 
 function connectEnrollmentDb(): mysqli
 {
@@ -55,14 +57,14 @@ function getBatchOptionsForGrade(string $gradeLevel): array
         ],
     ];
 
-    return $batchMap[$gradeLevel] ?? [];
+    return $batchMap[$gradeLevel] ?? [
+        'Batch 1 (MORNING)',
+        'Batch 2 (AFTERNOON)',
+    ];
 }
 
-$batchOptions = getBatchOptionsForGrade($selectedGrade);
+$batchOptions = [];
 $selectedBatchFilter = isset($_GET['filter_batch']) ? trim((string)$_GET['filter_batch']) : '';
-if ($selectedBatchFilter !== '' && !in_array($selectedBatchFilter, $batchOptions, true)) {
-    $selectedBatchFilter = '';
-}
 
 function ensureBatchAssignmentsTable(mysqli $conn): void
 {
@@ -112,6 +114,22 @@ if ($selectedSchoolYear === '' || $selectedGrade === '') {
     try {
         $conn = connectEnrollmentDb();
         ensureBatchAssignmentsTable($conn);
+
+        $selectedGradeRow = smartenroll_find_grade_level($selectedGrade, $conn);
+        if ($selectedGradeRow === null) {
+            throw new RuntimeException('This grade level is no longer active. Please choose another grade level.');
+        }
+
+        $selectedGrade = trim((string)($selectedGradeRow['grade_key'] ?? $selectedGrade));
+        $selectedGradeLabel = trim((string)($selectedGradeRow['grade_label'] ?? '')) ?: $selectedGrade;
+        $batchOptions = getBatchOptionsForGrade($selectedGrade);
+        if ($selectedBatchFilter !== '' && !in_array($selectedBatchFilter, $batchOptions, true)) {
+            $selectedBatchFilter = '';
+        }
+        $selectedGradeMatchValues = array_values(array_unique(array_filter([
+            $selectedGrade,
+            $selectedGradeLabel,
+        ], static fn(string $value): bool => trim($value) !== '')));
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->begin_transaction();
@@ -171,7 +189,7 @@ if ($selectedSchoolYear === '' || $selectedGrade === '') {
                     ON ba_current.enrollment_id = e.id
                    AND COALESCE(ba_current.school_year, '') = ?
                    AND COALESCE(ba_current.grade_level, '') = ?
-                WHERE COALESCE(e.grade_level, '') = ?
+                WHERE COALESCE(e.grade_level, '') IN (" . implode(',', array_fill(0, count($selectedGradeMatchValues), '?')) . ")
                   AND COALESCE(e.school_year, '') = ?
 
                 UNION
@@ -213,9 +231,19 @@ if ($selectedSchoolYear === '' || $selectedGrade === '') {
 
         $stmt = $conn->prepare($sql);
         if ($selectedBatchFilter !== '') {
-            $stmt->bind_param('sssssss', $selectedSchoolYear, $selectedGrade, $selectedGrade, $selectedSchoolYear, $selectedSchoolYear, $selectedGrade, $selectedBatchFilter);
+            $bindValues = array_merge(
+                [$selectedSchoolYear, $selectedGrade],
+                $selectedGradeMatchValues,
+                [$selectedSchoolYear, $selectedSchoolYear, $selectedGrade, $selectedBatchFilter]
+            );
+            $stmt->bind_param(str_repeat('s', count($bindValues)), ...$bindValues);
         } else {
-            $stmt->bind_param('ssssss', $selectedSchoolYear, $selectedGrade, $selectedGrade, $selectedSchoolYear, $selectedSchoolYear, $selectedGrade);
+            $bindValues = array_merge(
+                [$selectedSchoolYear, $selectedGrade],
+                $selectedGradeMatchValues,
+                [$selectedSchoolYear, $selectedSchoolYear, $selectedGrade]
+            );
+            $stmt->bind_param(str_repeat('s', count($bindValues)), ...$bindValues);
         }
         $stmt->execute();
         $result = $stmt->get_result();
@@ -228,6 +256,7 @@ if ($selectedSchoolYear === '' || $selectedGrade === '') {
 
             $fullName = trim($row['learner_lname'] . ', ' . $row['learner_fname'] . ' ' . $middleInitial);
             $row['full_name'] = preg_replace('/\s+/', ' ', $fullName);
+            $row['grade_level'] = $selectedGradeLabel;
             $students[] = $row;
         }
 
@@ -277,7 +306,7 @@ if ($selectedBatchFilter !== '') {
         <section class="card">
             <div class="filter-bar">
                 <div class="filter-badge"><strong>S.Y.:</strong> <?= htmlspecialchars($selectedSchoolYear !== '' ? $selectedSchoolYear : 'N/A') ?></div>
-                <div class="filter-badge"><strong>Grade Level:</strong> <?= htmlspecialchars($selectedGrade !== '' ? $selectedGrade : 'N/A') ?></div>
+                <div class="filter-badge"><strong>Grade Level:</strong> <?= htmlspecialchars($selectedGradeLabel !== '' ? $selectedGradeLabel : 'N/A') ?></div>
                 <div class="filter-badge"><strong>Batch Filter:</strong> <?= htmlspecialchars($selectedBatchFilter !== '' ? $selectedBatchFilter : 'All') ?></div>
             </div>
 
@@ -318,7 +347,7 @@ if ($selectedBatchFilter !== '') {
                 <div class="print-only print-header">
                     <div class="print-meta">
                         <p><strong>School Year:</strong> <?= htmlspecialchars($selectedSchoolYear !== '' ? $selectedSchoolYear : 'N/A') ?></p>
-                        <p><strong>Grade Level:</strong> <?= htmlspecialchars($selectedGrade !== '' ? $selectedGrade : 'N/A') ?></p>
+                        <p><strong>Grade Level:</strong> <?= htmlspecialchars($selectedGradeLabel !== '' ? $selectedGradeLabel : 'N/A') ?></p>
                         <p><strong>Printed At:</strong> <span id="printedAtValue">-</span></p>
                     </div>
                     <img src="assets/logo.png" alt="SmartEnroll Logo" class="print-logo">

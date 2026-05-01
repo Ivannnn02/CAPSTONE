@@ -2308,7 +2308,6 @@ if (isset($conn) && $conn instanceof mysqli) {
             <a href="tuition_receipt.php" class="dashboard-link back-left"><i class="fa-solid fa-arrow-left"></i></a>
             <div class="student-header-title">
                 <h1>Tuition Invoice Details</h1>
-                <p>Use the plus button to add the brochure breakdown items, then type the tuition amount and review the computed invoice total below.</p>
             </div>
         </div>
     </div>
@@ -2370,7 +2369,12 @@ if (isset($conn) && $conn instanceof mysqli) {
         </div>
 
         <?php ob_start(); ?>
-        <section class="card-block invoice-email-preview-panel" id="receipt-email-preview">
+        <section
+            class="card-block invoice-email-preview-panel<?php echo $activePaymentPlanKey === 'monthly' ? '' : ' is-plan-hidden'; ?>"
+            id="receipt-email-preview"
+            data-monthly-only-preview="1"
+            aria-hidden="<?php echo $activePaymentPlanKey === 'monthly' ? 'false' : 'true'; ?>"
+        >
             <div class="invoice-email-preview-actions">
                 <button type="button" class="secondary-btn btn-sm" id="invoiceEmailPrintTrigger" title="Print Invoice">
                     <i class="fa-solid fa-print"></i>
@@ -2457,7 +2461,12 @@ if (isset($conn) && $conn instanceof mysqli) {
             </div>
         </section>
 
-        <section class="card-block history-block gmail-history-block" id="gmail-send-history">
+        <section
+            class="card-block history-block gmail-history-block<?php echo $activePaymentPlanKey === 'monthly' ? '' : ' is-plan-hidden'; ?>"
+            id="gmail-send-history"
+            data-monthly-only-preview="1"
+            aria-hidden="<?php echo $activePaymentPlanKey === 'monthly' ? 'false' : 'true'; ?>"
+        >
             <div class="block-head">
                 <div>
                     <span class="eyebrow eyebrow-blue">Gmail Send History</span>
@@ -2536,7 +2545,9 @@ if (isset($conn) && $conn instanceof mysqli) {
                             <div class="payment-plan-copy">
                                 <span class="eyebrow eyebrow-blue">Payment Plans</span>
                                 <strong>Select the rate to use for this student</strong>
-                                <p><?php echo $paymentPlanLocked ? 'This plan is locked because the student already has saved payments.' : 'Switching plans updates the payment amounts shown below.'; ?></p>
+                                <?php if ($paymentPlanLocked): ?>
+                                    <p>This plan is locked because the student already has saved payments.</p>
+                                <?php endif; ?>
                             </div>
                             <div class="payment-plan-actions" id="paymentPlanActions">
                                 <?php foreach ($paymentCatalogByPlan as $planKey => $planConfig): ?>

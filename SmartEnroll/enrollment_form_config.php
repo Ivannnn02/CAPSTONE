@@ -488,6 +488,33 @@ function smartenroll_save_grade_levels(array $rows, ?mysqli $conn = null): void
         }
 
         $stmt->close();
+
+        $batchTableCheck = $db->query("SHOW TABLES LIKE 'batch_assignments'");
+        if ($batchTableCheck && $batchTableCheck->num_rows > 0) {
+            $activeGradeValues = [];
+            foreach ($cleanRows as $row) {
+                $activeGradeValues[] = (string)$row['grade_key'];
+                $activeGradeValues[] = (string)$row['grade_label'];
+            }
+            $activeGradeValues = array_values(array_unique(array_filter(
+                $activeGradeValues,
+                static fn(string $value): bool => trim($value) !== ''
+            )));
+
+            if ($activeGradeValues !== []) {
+                $deleteSql = "DELETE FROM batch_assignments WHERE COALESCE(grade_level, '') NOT IN ("
+                    . implode(',', array_fill(0, count($activeGradeValues), '?'))
+                    . ")";
+                $deleteStmt = $db->prepare($deleteSql);
+                $deleteStmt->bind_param(str_repeat('s', count($activeGradeValues)), ...$activeGradeValues);
+                $deleteStmt->execute();
+                $deleteStmt->close();
+            }
+        }
+        if ($batchTableCheck) {
+            $batchTableCheck->close();
+        }
+
         $db->commit();
     } catch (Throwable $e) {
         if ($db->errno === 0) {

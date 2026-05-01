@@ -120,9 +120,8 @@ try {
     <section class="student-directory-card">
         <div class="panel-top student-panel-top">
             <div>
-                <span class="eyebrow eyebrow-blue">Step 1</span>
+                <span class="eyebrow eyebrow-blue">Student Directory</span>
                 <h2>All Students</h2>
-                <p>Select one student to open the tuition payment page. Showing 12 students per page.</p>
             </div>
             <form method="get" action="tuition_receipt.php" class="search-box search-form">
                 <i class="fa-solid fa-magnifying-glass"></i>

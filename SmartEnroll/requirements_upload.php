@@ -260,7 +260,9 @@ try {
             <div>
                 <span class="eyebrow eyebrow-blue">Student Directory</span>
                 <h2><?php echo $isPrintMode ? 'Printable Requirements List' : 'Choose A Student'; ?></h2>
-                <p><?php echo $isPrintMode ? 'This view is ready to print based on the current search and requirement filter.' : 'Open a student record to upload the 2x2 picture, birth certificate, and medical certificate.'; ?></p>
+                <?php if ($isPrintMode): ?>
+                    <p>This view is ready to print based on the current search and requirement filter.</p>
+                <?php endif; ?>
             </div>
             <?php if (!$isPrintMode): ?>
                 <div class="requirements-controls">

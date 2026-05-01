@@ -323,16 +323,23 @@ $schoolYearDisplayValue = trim((string)($_POST['school_year'] ?? ''));
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? '') === 'save_grade_levels') {
     try {
         $currentGradeLevels = smartenroll_get_grade_levels();
+        $currentGradeLevelsById = [];
+        foreach ($currentGradeLevels as $currentGradeLevel) {
+            $currentGradeLevelsById[(int)($currentGradeLevel['id'] ?? 0)] = $currentGradeLevel;
+        }
         $rows = [];
+        $gradeIds = $_POST['grade_id'] ?? [];
         $gradeKeys = $_POST['grade_key'] ?? [];
         $gradeLabels = $_POST['grade_label'] ?? [];
-        $max = max(count($gradeKeys), count($gradeLabels));
+        $max = max(count($gradeIds), count($gradeKeys), count($gradeLabels));
 
         for ($i = 0; $i < $max; $i++) {
+            $gradeId = (int)($gradeIds[$i] ?? 0);
+            $currentGradeLevel = $currentGradeLevelsById[$gradeId] ?? ($currentGradeLevels[$i] ?? []);
             $rows[] = [
                 'grade_key' => $gradeKeys[$i] ?? '',
                 'grade_label' => $gradeLabels[$i] ?? '',
-                'tuition_fee' => $currentGradeLevels[$i]['tuition_fee'] ?? 0,
+                'tuition_fee' => $currentGradeLevel['tuition_fee'] ?? 0,
             ];
         }
 
@@ -748,7 +755,10 @@ if ($errorMessage === 'This grade level already exists' || str_starts_with($erro
                         <tbody id="gradeSettingsBody">
                             <?php foreach ($gradeLevels as $row): ?>
                                 <tr>
-                                    <td><input type="text" name="grade_key[]" value="<?php echo htmlspecialchars((string)$row['grade_key']); ?>" placeholder="Grade 4"></td>
+                                    <td>
+                                        <input type="hidden" name="grade_id[]" value="<?php echo htmlspecialchars((string)($row['id'] ?? 0)); ?>">
+                                        <input type="text" name="grade_key[]" value="<?php echo htmlspecialchars((string)$row['grade_key']); ?>" placeholder="Grade 4">
+                                    </td>
                                     <td><input type="text" name="grade_label[]" value="<?php echo htmlspecialchars((string)$row['grade_label']); ?>" placeholder="Grade 4"></td>
                                     <td><button type="button" class="settings-row-remove" data-remove-grade-row>Remove</button></td>
                                 </tr>
@@ -1095,7 +1105,10 @@ let activeFieldActionLabel = '';
 function buildGradeRow() {
     const row = document.createElement('tr');
     row.innerHTML = `
-        <td><input type="text" name="grade_key[]" placeholder="Grade 4"></td>
+        <td>
+            <input type="hidden" name="grade_id[]" value="0">
+            <input type="text" name="grade_key[]" placeholder="Grade 4">
+        </td>
         <td><input type="text" name="grade_label[]" placeholder="Grade 4"></td>
         <td><button type="button" class="settings-row-remove" data-remove-grade-row>Remove</button></td>
     `;
