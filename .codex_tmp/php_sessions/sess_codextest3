@@ -1,1 +1,0 @@
-auth_user|a:6:{s:2:"id";i:1;s:9:"full_name";s:10:"Codex Test";s:11:"employee_id";s:7:"TEST001";s:5:"email";s:16:"test@example.com";s:4:"role";s:7:"finance";s:8:"raw_role";s:7:"finance";}
