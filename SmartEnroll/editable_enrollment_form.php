@@ -1068,6 +1068,7 @@ if ($errorMessage === 'This grade level already exists' || str_starts_with($erro
     <input type="hidden" name="field_key" id="inlineDeleteFieldKey">
 </form>
 
+<script src="js/script.js"></script>
 <script>
 const gradeSettingsForm = document.getElementById('gradeSettingsForm');
 const gradeSettingsBody = document.getElementById('gradeSettingsBody');

@@ -474,6 +474,7 @@ try {
         </form>
     </div>
 </main>
+<script src="js/script.js"></script>
 <script>
     const PAYMENT_PLAN_DEFAULTS = <?php echo json_encode(smartenroll_payment_plan_defaults(), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>;
     const RESTRICTED_BOOK_GRADES = new Set(['Toddler', 'Casa', 'Kindergarten']);

@@ -374,6 +374,7 @@ window.addEventListener('load', () => {
 });
 </script>
 <?php endif; ?>
+<script src="js/script.js"></script>
 <script src="js/requirements_upload.js"></script>
 </body>
 </html>

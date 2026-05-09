@@ -842,6 +842,7 @@ try {
 </main>
 
 <?php $studentEditJsVersion = @filemtime(__DIR__ . '/js/student_edit.js') ?: time(); ?>
+<script src="js/script.js"></script>
 <script src="js/student_edit.js?v=<?php echo urlencode((string)$studentEditJsVersion); ?>"></script>
 </body>
 </html>

@@ -131,5 +131,6 @@ function labelize(string $key): string
     </div>
 </main>
 
+<script src="js/script.js"></script>
 </body>
 </html>

@@ -354,7 +354,7 @@ function smartenroll_build_payment_catalog(array $student, array $plan, float $r
             'discount_amount' => $discountAmount,
             'discount_percent' => $resolvedDiscountPercent,
             'configured_amount' => $configuredAmount,
-            'manual_amount' => $option === 'Tuition Fee',
+            'manual_amount' => $option === $coreOption,
             'disabled' => $disabled,
             'hint' => $hint,
         ];
@@ -762,7 +762,7 @@ function write_gmail_send_history(mysqli $conn, array $history): void
 {
     $studentId = trim((string)($history['student_id'] ?? ''));
     if ($studentId === '') {
-        throw new RuntimeException('Cannot save Gmail send history without a student ID.');
+        throw new RuntimeException('Cannot save email send history without a student ID.');
     }
 
     $historyType = trim((string)($history['history_type'] ?? 'preview'));
@@ -925,12 +925,24 @@ function load_gmail_send_history(mysqli $conn, array $student, string $gradeLeve
     return $history;
 }
 
-function parse_payment_items(string $rawJson, array $allowedOptions, array $feeDefaults, float $defaultTuitionAmount, array $discountPlanConfig = []): array
+function parse_payment_items(
+    string $rawJson,
+    array $allowedOptions,
+    array $feeDefaults,
+    float $defaultTuitionAmount,
+    array $discountPlanConfig = [],
+    array $manualAmountOptions = []
+): array
 {
     $decoded = json_decode($rawJson, true);
     if (!is_array($decoded)) {
         throw new RuntimeException('Please add at least one payment row.');
     }
+
+    $normalizedManualAmountOptions = array_values(array_unique(array_map(
+        static fn($option): string => trim((string)$option),
+        $manualAmountOptions
+    )));
 
     $items = [];
     foreach ($decoded as $row) {
@@ -947,6 +959,8 @@ function parse_payment_items(string $rawJson, array $allowedOptions, array $feeD
             throw new RuntimeException('Please choose a valid payment item for every row.');
         }
 
+        $isManualAmountOption = in_array($option, $normalizedManualAmountOptions, true);
+
         if (isset($discountPlanConfig[$option]) && is_array($discountPlanConfig[$option])) {
             $planMeta = $discountPlanConfig[$option];
             $amount = round((float)($planMeta['amount'] ?? 0), 2);
@@ -954,7 +968,7 @@ function parse_payment_items(string $rawJson, array $allowedOptions, array $feeD
             $discountPercent = max(0, round((float)($planMeta['discount_percent'] ?? 0), 2));
             $defaultLabel = trim((string)($planMeta['label'] ?? $option));
         } else {
-            $amount = $option === 'Tuition Fee'
+            $amount = $isManualAmountOption
                 ? round((float)($row['amount'] ?? 0), 2)
                 : round((float)($feeDefaults[$option] ?? 0), 2);
             $discountPercent = max(0, round((float)($row['discount_percent'] ?? 0), 2));
@@ -963,8 +977,8 @@ function parse_payment_items(string $rawJson, array $allowedOptions, array $feeD
         }
 
         if ($amount <= 0) {
-            if ($option === 'Tuition Fee') {
-                throw new RuntimeException('Please enter a valid tuition fee amount.');
+            if ($isManualAmountOption) {
+                throw new RuntimeException('Please enter a valid amount for the selected payment item.');
             }
             throw new RuntimeException('Please set a valid fixed amount for every selected payment item.');
         }
@@ -1866,7 +1880,8 @@ try {
                 $paymentOptions,
                 $paymentConfig,
                 $tuitionFee,
-                $discountPlanConfig
+                $discountPlanConfig,
+                [$coreOption]
             );
 
             $selectedPaymentOptions = array_map(
@@ -2381,7 +2396,7 @@ if (isset($conn) && $conn instanceof mysqli) {
                 </button>
                 <button type="button" class="primary-btn btn-sm" id="invoiceEmailSendTrigger" <?php echo filter_var($studentEmail, FILTER_VALIDATE_EMAIL) ? '' : 'disabled'; ?>>
                     <i class="fa-solid fa-paper-plane"></i>
-                    Send to Gmail
+                    Send to Email
                 </button>
                 <a href="tuition_receipt_details.php?student_id=<?php echo urlencode((string)$selectedStudent['student_id']); ?>" class="primary-btn btn-sm" style="text-decoration: none;">
                     <i class="fa-solid fa-plus"></i>
@@ -2441,6 +2456,7 @@ if (isset($conn) && $conn instanceof mysqli) {
                                             data-default="<?php echo htmlspecialchars(number_format((float)$catalogItem['default_amount'], 2, '.', '')); ?>"
                                             data-base="<?php echo htmlspecialchars(number_format((float)($catalogItem['base_amount'] ?? $catalogItem['default_amount']), 2, '.', '')); ?>"
                                             data-discount-percent="<?php echo htmlspecialchars(number_format((float)($catalogItem['discount_percent'] ?? 0), 2, '.', '')); ?>"
+                                            data-manual-amount="<?php echo !empty($catalogItem['manual_amount']) ? '1' : '0'; ?>"
                                             data-disabled="<?php echo !empty($catalogItem['disabled']) ? '1' : '0'; ?>"
                                         >
                                             <button type="button" class="catalog-add-btn" aria-label="Add <?php echo htmlspecialchars($catalogItem['option']); ?>" <?php echo !empty($catalogItem['disabled']) ? 'disabled' : ''; ?>>
@@ -2469,9 +2485,9 @@ if (isset($conn) && $conn instanceof mysqli) {
         >
             <div class="block-head">
                 <div>
-                    <span class="eyebrow eyebrow-blue">Gmail Send History</span>
+                    <span class="eyebrow eyebrow-blue">Email Send History</span>
                     <h3>Sent Email History</h3>
-                    <p>This is a separate history for preview emails and invoice emails already sent to Gmail.</p>
+                    <p>This is a separate history for preview emails and invoice emails already sent to recipients.</p>
                 </div>
             </div>
 
@@ -2490,7 +2506,7 @@ if (isset($conn) && $conn instanceof mysqli) {
                     <tbody>
                         <?php if (empty($gmailSendHistory)): ?>
                             <tr>
-                                <td colspan="6">No Gmail send history yet.</td>
+                                <td colspan="6">No email send history yet.</td>
                             </tr>
                         <?php else: ?>
                             <?php foreach ($gmailSendHistory as $gmailHistory): ?>
@@ -2646,6 +2662,7 @@ if (isset($conn) && $conn instanceof mysqli) {
                                                             data-default="<?php echo htmlspecialchars(number_format((float)$catalogItem['default_amount'], 2, '.', '')); ?>"
                                                             data-base="<?php echo htmlspecialchars(number_format((float)($catalogItem['base_amount'] ?? $catalogItem['default_amount']), 2, '.', '')); ?>"
                                                             data-discount-percent="<?php echo htmlspecialchars(number_format((float)($catalogItem['discount_percent'] ?? 0), 2, '.', '')); ?>"
+                                                            data-manual-amount="<?php echo !empty($catalogItem['manual_amount']) ? '1' : '0'; ?>"
                                                             data-disabled="<?php echo !empty($catalogItem['disabled']) ? '1' : '0'; ?>"
                                                         >
                                                             <button type="button" class="catalog-add-btn" aria-label="Add <?php echo htmlspecialchars($catalogItem['option']); ?>" <?php echo !empty($catalogItem['disabled']) ? 'disabled' : ''; ?>>
@@ -2806,7 +2823,7 @@ if (isset($conn) && $conn instanceof mysqli) {
                                 <input type="hidden" name="payment_id" value="<?php echo (int)$selectedPayment['id']; ?>">
                                 <button type="submit" class="primary-btn" <?php echo filter_var($studentEmail, FILTER_VALIDATE_EMAIL) ? '' : 'disabled'; ?>>
                                     <i class="fa-solid fa-paper-plane"></i>
-                                    Send Invoice to Gmail
+                                    Send Invoice to Email
                                 </button>
                             </form>
                         </div>
@@ -2964,7 +2981,7 @@ if (isset($conn) && $conn instanceof mysqli) {
                     class="tuition-manual-input"
                     inputmode="decimal"
                     value="0.00"
-                    aria-label="Tuition Fee Unit Price"
+                    aria-label="Payment Unit Price"
                 >
             </div>
         </td>
@@ -2976,6 +2993,7 @@ if (isset($conn) && $conn instanceof mysqli) {
     </tr>
 </template>
 
+<script src="js/script.js"></script>
 <script src="js/pay_tuition.js"></script>
 </body>
 </html>

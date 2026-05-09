@@ -379,6 +379,7 @@ try {
 </div>
 <?php endif; ?>
 
+<script src="js/script.js"></script>
 <script src="js/student_list.js"></script>
 </body>
 </html>

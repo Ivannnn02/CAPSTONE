@@ -182,6 +182,7 @@ try {
     </section>
 </main>
 
+<script src="js/script.js"></script>
 <script src="js/pay_tuition.js"></script>
 </body>
 </html>

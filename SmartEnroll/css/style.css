@@ -1455,6 +1455,11 @@ header {
     gap: 16px;
 }
 
+.login-form-compact {
+    gap: 0;
+    margin-top: 12px;
+}
+
 .login-form label {
     display: flex;
     flex-direction: column;
@@ -1539,6 +1544,17 @@ header {
     background: var(--logo-yellow-soft);
     transform: translateY(-2px);
     box-shadow: 0 10px 20px rgba(253, 216, 53, 0.3);
+}
+
+.login-submit-secondary {
+    background: #eff6ff;
+    color: #19325a;
+    border: 1px solid #bfd4ff;
+}
+
+.login-submit-secondary:hover {
+    background: #dbeafe;
+    box-shadow: 0 10px 20px rgba(30, 136, 229, 0.18);
 }
 
 .login-help {

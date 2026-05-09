@@ -54,12 +54,13 @@ function buildInvoiceEmailCatalogMarkup() {
     return '';
   }
 
-  const renderInvoiceEmailCatalogRowMarkup = (option, displayLabel, defaultAmount, baseAmount, discountPercent, disabled) => {
+  const renderInvoiceEmailCatalogRowMarkup = (option, displayLabel, defaultAmount, baseAmount, discountPercent, manualAmount, disabled) => {
     const normalizedOption = String(option || '').trim();
     const normalizedLabel = String(displayLabel || normalizedOption).trim() || normalizedOption;
     const normalizedDefaultAmount = formatInvoiceNumber(parseAmount(defaultAmount));
     const normalizedBaseAmount = formatInvoiceNumber(parseAmount(baseAmount || defaultAmount));
     const normalizedDiscountPercent = Number(parseAmount(discountPercent || '0')).toFixed(2);
+    const isManualAmount = manualAmount === true || manualAmount === 1 || manualAmount === '1';
     const isDisabled = disabled === true || disabled === 1 || disabled === '1';
 
     return '<div class="catalog-row invoice-email-catalog-row' + (isDisabled ? ' is-disabled' : '') + '"'
@@ -68,6 +69,7 @@ function buildInvoiceEmailCatalogMarkup() {
       + ' data-default="' + escapeHtml(normalizedDefaultAmount) + '"'
       + ' data-base="' + escapeHtml(normalizedBaseAmount) + '"'
       + ' data-discount-percent="' + escapeHtml(normalizedDiscountPercent) + '"'
+      + ' data-manual-amount="' + (isManualAmount ? '1' : '0') + '"'
       + ' data-disabled="' + (isDisabled ? '1' : '0') + '">'
       + '<button type="button" class="catalog-add-btn" aria-label="Add ' + escapeHtml(normalizedOption) + '"' + (isDisabled ? ' disabled' : '') + '>'
       + '<i class="fa-solid ' + (isDisabled ? 'fa-check' : 'fa-plus') + '"></i>'
@@ -101,6 +103,7 @@ function buildInvoiceEmailCatalogMarkup() {
         item.default_amount || item.defaultAmount || '0',
         item.base_amount || item.baseAmount || item.default_amount || item.defaultAmount || '0',
         item.discount_percent || item.discountPercent || '0',
+        item.manual_amount || item.manualAmount || false,
         item.disabled
       )).join('')
       + '</div>';
@@ -122,6 +125,7 @@ function buildInvoiceEmailCatalogMarkup() {
         row.dataset.default || '0',
         row.dataset.base || row.dataset.default || '0',
         row.dataset.discountPercent || '0',
+        row.dataset.manualAmount === '1',
         row.dataset.disabled === '1'
       );
     }).join('')
@@ -459,6 +463,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     const defaultAmount = formatInvoiceNumber(parseAmount(item.default_amount || item.defaultAmount || '0'));
     const baseAmount = formatInvoiceNumber(parseAmount(item.base_amount || item.baseAmount || item.default_amount || item.defaultAmount || '0'));
     const discountPercent = Number(parseAmount(item.discount_percent || item.discountPercent || '0')).toFixed(2);
+    const manualAmount = item.manual_amount === true || item.manualAmount === true || item.manual_amount === 1 || item.manualAmount === 1 || item.manual_amount === '1' || item.manualAmount === '1';
     const disabled = item.disabled === true || item.disabled === 1 || item.disabled === '1';
 
     return '<div class="catalog-row receipt-catalog-row' + (disabled ? ' is-disabled' : '') + '"'
@@ -467,6 +472,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
       + ' data-default="' + escapeHtml(defaultAmount) + '"'
       + ' data-base="' + escapeHtml(baseAmount) + '"'
       + ' data-discount-percent="' + escapeHtml(discountPercent) + '"'
+      + ' data-manual-amount="' + (manualAmount ? '1' : '0') + '"'
       + ' data-disabled="' + (disabled ? '1' : '0') + '">'
       + '<button type="button" class="catalog-add-btn" aria-label="Add ' + escapeHtml(option) + '"' + (disabled ? ' disabled' : '') + '>'
       + '<i class="fa-solid ' + (disabled ? 'fa-check' : 'fa-plus') + '"></i>'
@@ -561,6 +567,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
   const getTuitionManualWrap = (row) => row.querySelector('.tuition-manual-wrap');
   const getTuitionManualInput = (row) => row.querySelector('.tuition-manual-input');
   const getDiscountCell = (row) => row.querySelector('.selected-row-discount');
+  const isManualAmountRow = (row) => row?.dataset.manualAmount === '1';
 
   const setRowPricing = (row, amount, options = {}) => {
     const {
@@ -613,9 +620,9 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     }
   };
 
-  const getMaxTuitionAllowed = (tuitionRow) => {
+  const getMaxManualAmountAllowed = (manualRow) => {
     const otherRowsTotal = getRows().reduce((sum, row) => {
-      if (row === tuitionRow) {
+      if (row === manualRow) {
         return sum;
       }
       return sum + Math.max(getRowAmount(row), 0);
@@ -624,7 +631,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     return Math.max(remainingBeforePayment - otherRowsTotal, 0);
   };
 
-  const enableTuitionManualInput = (row) => {
+  const enableManualAmountInput = (row) => {
     const manualWrap = getTuitionManualWrap(row);
     const manualInput = getTuitionManualInput(row);
     const display = getUnitPriceDisplay(row);
@@ -641,7 +648,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     });
 
     manualInput.addEventListener('input', () => {
-      const maxAllowed = getMaxTuitionAllowed(row);
+      const maxAllowed = getMaxManualAmountAllowed(row);
       const baseFactor = getRowBaseFactor(row);
       const typedUnitPrice = parseAmount(manualInput.value);
       const normalizedUnitPrice = Math.min(Math.max(typedUnitPrice, 0), maxAllowed * baseFactor);
@@ -655,7 +662,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     });
 
     manualInput.addEventListener('blur', () => {
-      const maxAllowed = getMaxTuitionAllowed(row);
+      const maxAllowed = getMaxManualAmountAllowed(row);
       const baseFactor = getRowBaseFactor(row);
       const normalizedUnitPrice = Math.min(Math.max(getTuitionUnitPriceInputValue(row), 0), maxAllowed * baseFactor);
       const normalizedAmount = getRowAmountFromUnitPrice(row, normalizedUnitPrice);
@@ -675,11 +682,11 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
 
   const syncTotals = () => {
     getRows().forEach((row) => {
-      if (row.dataset.option !== 'Tuition Fee') {
+      if (!isManualAmountRow(row)) {
         return;
       }
 
-      const maxAllowed = getMaxTuitionAllowed(row);
+      const maxAllowed = getMaxManualAmountAllowed(row);
       const currentAmount = getRowAmount(row);
       if (currentAmount > maxAllowed) {
         setRowAmount(row, maxAllowed);
@@ -793,6 +800,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     const {
       baseAmount = defaultAmount,
       discountPercent = getActivePlanDiscountPercent(option),
+      manualAmount = false,
       replaceExisting = false,
       statusMessage = '',
       isDiscountPlan = isDiscountPlanOption(option)
@@ -830,6 +838,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
     const effectiveLabel = displayLabel || option;
     row.dataset.displayLabel = effectiveLabel;
     row.dataset.label = effectiveLabel;
+    row.dataset.manualAmount = manualAmount ? '1' : '0';
     name.textContent = effectiveLabel;
     if (isDiscountPlan) {
       setRowAmount(row, defaultAmount, {
@@ -837,10 +846,10 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
         discountPercent
       });
       setRowStatus(row, statusMessage || `${formatDiscountAmount(baseAmount - defaultAmount)} discount applied automatically`);
-    } else if (option === 'Tuition Fee') {
-      const maxAllowed = getMaxTuitionAllowed(row);
+    } else if (manualAmount) {
+      const maxAllowed = getMaxManualAmountAllowed(row);
       if (maxAllowed <= 0) {
-        showToast('No remaining balance available for Tuition Fee.');
+        showToast('No remaining balance available for this payment item.');
         return null;
       }
 
@@ -853,7 +862,7 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
       setRowStatus(row, Math.max(baseAmount - defaultAmount, 0) > 0
         ? 'Discount is applied automatically as you edit the unit price'
         : 'Enter any amount up to the remaining balance');
-      enableTuitionManualInput(row);
+      enableManualAmountInput(row);
     } else {
       setRowAmount(row, defaultAmount, { baseAmount, discountPercent });
       setRowStatus(
@@ -1043,10 +1052,11 @@ if (paymentCatalog && selectedPaymentTable && selectedPaymentRowTemplate) {
         const defaultAmount = parseAmount(catalogRow.dataset.default || '0');
         const baseAmount = parseAmount(catalogRow.dataset.base || catalogRow.dataset.default || '0');
         const discountPercent = parseAmount(catalogRow.dataset.discountPercent || '0');
+        const manualAmount = catalogRow.dataset.manualAmount === '1';
         if (!option) {
           return;
         }
-        addSelectedRow(option, defaultAmount, displayLabel, { baseAmount, discountPercent });
+        addSelectedRow(option, defaultAmount, displayLabel, { baseAmount, discountPercent, manualAmount });
       };
 
       button?.addEventListener('click', (event) => {

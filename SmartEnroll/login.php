@@ -60,6 +60,42 @@ function smartenroll_send_registration_code(string $email, string $fullName, str
     return smtp_send_mail($email, $subject, $html, $text, $error);
 }
 
+function smartenroll_generate_registration_code(): string
+{
+    return str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+}
+
+function smartenroll_issue_registration_verification(array $registrationData, ?string &$error = null): bool
+{
+    $fullName = trim((string)($registrationData['full_name'] ?? ''));
+    $employeeId = trim((string)($registrationData['employee_id'] ?? ''));
+    $email = trim((string)($registrationData['email'] ?? ''));
+    $passwordHash = (string)($registrationData['password_hash'] ?? '');
+    $role = trim((string)($registrationData['role'] ?? 'finance'));
+
+    if ($fullName === '' || $employeeId === '' || $email === '' || $passwordHash === '') {
+        $error = 'Registration details are incomplete. Please register again.';
+        return false;
+    }
+
+    $verificationCode = smartenroll_generate_registration_code();
+    if (!smartenroll_send_registration_code($email, $fullName, $verificationCode, $error)) {
+        return false;
+    }
+
+    $_SESSION['register_verification'] = [
+        'full_name' => $fullName,
+        'employee_id' => $employeeId,
+        'email' => $email,
+        'password_hash' => $passwordHash,
+        'role' => $role,
+        'code' => $verificationCode,
+        'expires_at' => time() + 600,
+    ];
+
+    return true;
+}
+
 if (($_GET['status'] ?? '') === 'logged_out') {
     $successMessage = 'You have been logged out successfully.';
 }
@@ -137,23 +173,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
             $errorMessage = 'That email is already registered.';
         } else {
             $passwordHash = password_hash($password, PASSWORD_DEFAULT);
-            $verificationCode = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
             $mailError = '';
 
-            if (!smartenroll_send_registration_code($registerEmailValue, $registerNameValue, $verificationCode, $mailError)) {
+            if (!smartenroll_issue_registration_verification([
+                'full_name' => $registerNameValue,
+                'employee_id' => $registerEmployeeIdValue,
+                'email' => $registerEmailValue,
+                'password_hash' => $passwordHash,
+                'role' => $registerRoleValue,
+            ], $mailError)) {
                 $errorMessage = $mailError !== '' ? $mailError : 'Unable to send verification code right now.';
             } else {
-                $_SESSION['register_verification'] = [
-                    'full_name' => $registerNameValue,
-                    'employee_id' => $registerEmployeeIdValue,
-                    'email' => $registerEmailValue,
-                    'password_hash' => $passwordHash,
-                    'role' => $registerRoleValue,
-                    'code' => $verificationCode,
-                    'expires_at' => time() + 600,
-                ];
+                $pendingVerification = smartenroll_registration_verification_state();
                 $registerVerificationRequired = true;
-                $successMessage = 'We sent a verification code to your Gmail account. Enter it below to finish registration.';
+                $successMessage = 'We sent a verification code to your email address. Enter it below to finish registration.';
+            }
+        }
+    }
+
+    if ($authAction === 'resend_register_code') {
+        $activeTab = 'register';
+        $csrfToken = trim((string)($_POST['csrf_token'] ?? ''));
+        $pendingVerification = smartenroll_registration_verification_state();
+        $registerVerificationRequired = true;
+
+        if ($pendingVerification !== null) {
+            $registerNameValue = (string)($pendingVerification['full_name'] ?? '');
+            $registerEmployeeIdValue = (string)($pendingVerification['employee_id'] ?? '');
+            $registerEmailValue = (string)($pendingVerification['email'] ?? '');
+        }
+
+        if (!smartenroll_verify_csrf($csrfToken, 'register_form')) {
+            $errorMessage = 'Session verification failed. Please refresh and try again.';
+        } elseif ($pendingVerification === null) {
+            $errorMessage = 'Your verification session has expired. Please register again.';
+            $registerVerificationRequired = false;
+        } elseif (smartenroll_find_user_by_employee_id($conn, (string)$pendingVerification['employee_id']) !== null) {
+            smartenroll_clear_registration_verification();
+            $errorMessage = 'That Employee ID is already registered.';
+            $registerVerificationRequired = false;
+        } elseif (smartenroll_find_user_by_email($conn, (string)$pendingVerification['email']) !== null) {
+            smartenroll_clear_registration_verification();
+            $errorMessage = 'That email is already registered.';
+            $registerVerificationRequired = false;
+        } else {
+            $mailError = '';
+
+            if (!smartenroll_issue_registration_verification($pendingVerification, $mailError)) {
+                $errorMessage = $mailError !== '' ? $mailError : 'Unable to resend the verification code right now.';
+            } else {
+                $pendingVerification = smartenroll_registration_verification_state();
+                $registerVerificationCodeValue = '';
+                $registerVerificationRequired = true;
+                $successMessage = 'We sent a new verification code to your email address.';
             }
         }
     }
@@ -301,7 +373,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
                         <input type="hidden" name="auth_action" value="verify_register_code">
                         <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($registerCsrfToken, ENT_QUOTES, 'UTF-8'); ?>">
                         <label>
-                            Gmail Address
+                            Email Address
                             <input type="email" value="<?php echo htmlspecialchars($registerEmailValue, ENT_QUOTES, 'UTF-8'); ?>" readonly>
                         </label>
                         <label>
@@ -310,8 +382,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
                         </label>
                         <button class="login-submit" type="submit">Verify Code</button>
                         <div class="login-help">
-                            <p>Check your Gmail inbox for the confirmation code we sent.</p>
+                            <p>Check your email inbox for the latest confirmation code. Entering a wrong code will not send a new one.</p>
                         </div>
+                    </form>
+                    <form class="login-form login-form-compact" id="registerResendForm" action="login.php" method="post">
+                        <input type="hidden" name="auth_action" value="resend_register_code">
+                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($registerCsrfToken, ENT_QUOTES, 'UTF-8'); ?>">
+                        <button class="login-submit login-submit-secondary" type="submit">Resend Verification Code</button>
                     </form>
                 <?php else: ?>
                     <form class="login-form" id="registerForm" action="login.php" method="post">
@@ -345,7 +422,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $conn instanceof mysqli) {
                         </label>
                         <button class="login-submit" type="submit">Send Verification Code</button>
                         <div class="login-help">
-                            <p>Use your official Employee ID and Gmail address to create an account.</p>
+                            <p>Use your official Employee ID and email address to create an account.</p>
                         </div>
                     </form>
                 <?php endif; ?>

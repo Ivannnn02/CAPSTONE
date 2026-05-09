@@ -783,6 +783,7 @@ foreach ($builtinFieldMap as $fieldKey => $fieldRow) {
 
 </div>
 
+    <script src="js/script.js"></script>
     <script>
     window.smartenrollFieldLabels = <?php echo json_encode($fieldLabelsForJs, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
     </script>

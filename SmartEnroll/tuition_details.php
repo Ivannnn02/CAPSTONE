@@ -647,6 +647,7 @@ if ($student && isset($conn) && $conn instanceof mysqli) {
     </section>
 </main>
 
+<script src="js/script.js"></script>
 <script>
     // Grade level payment history data
     const detailedPaymentHistory = <?php echo json_encode($detailedPaymentHistory, JSON_UNESCAPED_SLASHES); ?>;

@@ -105,6 +105,7 @@ function format_name(array $row): string
 
 </main>
 
+<script src="js/script.js"></script>
 <script src="js/track_tuition.js"></script>
 </body>
 </html>

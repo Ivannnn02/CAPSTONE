@@ -142,6 +142,7 @@ if ($profileFirstName !== '') {
     </div>
 </main>
 
+<script src="js/script.js"></script>
 <script src="js/dashboard.js"></script>
 </body>
 </html>

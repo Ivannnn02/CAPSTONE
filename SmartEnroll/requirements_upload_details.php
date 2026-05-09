@@ -302,6 +302,7 @@ foreach (array_keys($requirements) as $key) {
     <?php endif; ?>
 </main>
 
+<script src="js/script.js"></script>
 <script src="js/requirements_upload.js"></script>
 </body>
 </html>
